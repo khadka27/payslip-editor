@@ -21,6 +21,8 @@ import {
 import Papa from 'papaparse';
 import { Employee, EmploymentType } from '../types/payslip';
 import { formatCurrency } from '../lib/calculator';
+import { CustomSelect } from './ui/CustomSelect';
+import { CustomDatePicker } from './ui/CustomDatePicker';
 
 interface EmployeeManagerProps {
   employees: Employee[];
@@ -477,35 +479,33 @@ export const EmployeeManager: React.FC<EmployeeManagerProps> = ({ employees, onS
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-slate-700">Employment Type</label>
-                    <select
+                    <label className="text-xs font-semibold text-slate-700 block mb-1">Employment Type</label>
+                    <CustomSelect
+                      options={[
+                        { value: 'full_time', label: 'Full-time' },
+                        { value: 'part_time', label: 'Part-time' },
+                        { value: 'contract', label: 'Contract' },
+                        { value: 'temporary', label: 'Temporary' },
+                      ]}
                       value={editingEmployee.employmentType}
-                      onChange={(e) => setEditingEmployee({ ...editingEmployee, employmentType: e.target.value as EmploymentType })}
-                      className="w-full text-xs p-2.5 rounded-lg border border-slate-300 mt-1 bg-white"
-                    >
-                      <option value="full_time">Full-time</option>
-                      <option value="part_time">Part-time</option>
-                      <option value="contract">Contract</option>
-                      <option value="temporary">Temporary</option>
-                    </select>
+                      onChange={(val) => setEditingEmployee({ ...editingEmployee, employmentType: val as EmploymentType })}
+                    />
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-slate-700">Base Salary ($ / month) *</label>
+                    <label className="text-xs font-semibold text-slate-700 block mb-1">Base Salary ($ / month) *</label>
                     <input
                       type="number"
                       required
                       value={editingEmployee.basicSalary}
                       onChange={(e) => setEditingEmployee({ ...editingEmployee, basicSalary: parseFloat(e.target.value) || 0 })}
-                      className="w-full text-xs p-2.5 rounded-lg border border-slate-300 font-mono mt-1"
+                      className="w-full text-xs p-2.5 rounded-xl border border-slate-300 font-mono text-slate-900 font-bold bg-slate-50/60 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-slate-700">Date of Joining</label>
-                    <input
-                      type="date"
+                    <label className="text-xs font-semibold text-slate-700 block mb-1">Date of Joining</label>
+                    <CustomDatePicker
                       value={editingEmployee.joiningDate}
-                      onChange={(e) => setEditingEmployee({ ...editingEmployee, joiningDate: e.target.value })}
-                      className="w-full text-xs p-2.5 rounded-lg border border-slate-300 mt-1"
+                      onChange={(val) => setEditingEmployee({ ...editingEmployee, joiningDate: val })}
                     />
                   </div>
                   <div>

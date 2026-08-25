@@ -48,6 +48,8 @@ import {
 } from '../types/payslip';
 import { calculateSalary, formatCurrency, generateVerificationCode } from '../lib/calculator';
 import { DEFAULT_TEMPLATES } from '../lib/templates';
+import { CustomSelect } from './ui/CustomSelect';
+import { CustomDatePicker } from './ui/CustomDatePicker';
 import { INITIAL_COMPANY, INITIAL_EMPLOYEES } from '../lib/storage';
 
 interface PayslipStudioProps {
@@ -425,37 +427,36 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
           <div className="flex items-center gap-2">
             <div>
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Template Preset</div>
-              <select
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Template Preset</div>
+              <CustomSelect
+                options={DEFAULT_TEMPLATES.map((t) => ({ value: t.id, label: t.name }))}
                 value={template.id}
-                onChange={(e) => {
-                  const found = DEFAULT_TEMPLATES.find((t) => t.id === e.target.value);
+                onChange={(val) => {
+                  const found = DEFAULT_TEMPLATES.find((t) => t.id === val);
                   if (found) setTemplate(found);
                 }}
-                className="text-xs font-extrabold px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-800 shadow-2xs hover:bg-slate-50 outline-none cursor-pointer custom-select"
-              >
-                {DEFAULT_TEMPLATES.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
+                size="sm"
+              />
             </div>
 
             <div>
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Currency</div>
-              <select
+              <CustomSelect
+                fontMono
+                options={[
+                  { value: '$', label: '$ USD' },
+                  { value: '€', label: '€ EUR' },
+                  { value: '£', label: '£ GBP' },
+                  { value: '₹', label: '₹ INR' },
+                  { value: 'NRs', label: 'NRs NPR' },
+                  { value: 'A$', label: 'A$ AUD' },
+                  { value: 'C$', label: 'C$ CAD' },
+                  { value: '¥', label: '¥ JPY' },
+                ]}
                 value={currencySymbol}
-                onChange={(e) => setCurrencySymbol(e.target.value)}
-                className="text-xs font-extrabold px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-800 shadow-2xs hover:bg-slate-50 outline-none cursor-pointer font-mono custom-select"
-              >
-                <option value="$">$ USD</option>
-                <option value="€">€ EUR</option>
-                <option value="£">£ GBP</option>
-                <option value="₹">₹ INR</option>
-                <option value="NRs">NRs NPR</option>
-                <option value="A$">A$ AUD</option>
-                <option value="C$">C$ CAD</option>
-                <option value="¥">¥ JPY</option>
-              </select>
+                onChange={setCurrencySymbol}
+                size="sm"
+              />
             </div>
           </div>
         </div>
@@ -836,12 +837,11 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                   />
                 </div>
                 <div>
-                  <label className="font-semibold text-slate-700">Date of Joining</label>
-                  <input
-                    type="date"
+                  <label className="font-semibold text-slate-700 block mb-1">Date of Joining</label>
+                  <CustomDatePicker
                     value={employee.joiningDate}
-                    onChange={(e) => setEmployee({ ...employee, joiningDate: e.target.value })}
-                    className="w-full p-2 rounded-lg border border-slate-300 mt-1"
+                    onChange={(val) => setEmployee({ ...employee, joiningDate: val })}
+                    align="right"
                   />
                 </div>
               </div>
@@ -972,16 +972,12 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold text-slate-700">Salary Month</label>
-                  <select
+                  <label className="font-semibold text-slate-700 block mb-1">Salary Month</label>
+                  <CustomSelect
+                    options={['January','February','March','April','May','June','July','August','September','October','November','December']}
                     value={salaryMonth}
-                    onChange={(e) => setSalaryMonth(e.target.value)}
-                    className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 bg-slate-50/60 font-semibold text-slate-900 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none cursor-pointer custom-select"
-                  >
-                    {['January','February','March','April','May','June','July','August','September','October','November','December'].map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
+                    onChange={setSalaryMonth}
+                  />
                 </div>
                 <div>
                   <label className="font-semibold text-slate-700">Salary Year</label>
@@ -989,7 +985,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                     type="number"
                     value={salaryYear}
                     onChange={(e) => setSalaryYear(parseInt(e.target.value) || 2026)}
-                    className="w-full p-2 rounded-lg border border-slate-300 mt-1 font-mono"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 font-mono text-slate-900 font-bold bg-slate-50/60 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
                   />
                 </div>
               </div>
@@ -1001,7 +997,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                     type="number"
                     value={attendance.workingDays}
                     onChange={(e) => setAttendance({ ...attendance, workingDays: parseInt(e.target.value) || 0 })}
-                    className="w-full p-2 rounded-lg border border-slate-300 mt-1 font-mono"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 font-mono text-slate-900 font-bold bg-slate-50/60 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
                   />
                 </div>
                 <div>
@@ -1010,7 +1006,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                     type="number"
                     value={attendance.overtimeHours}
                     onChange={(e) => setAttendance({ ...attendance, overtimeHours: parseInt(e.target.value) || 0 })}
-                    className="w-full p-2 rounded-lg border border-slate-300 mt-1 font-mono"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 font-mono text-slate-900 font-bold bg-slate-50/60 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
                   />
                 </div>
               </div>
@@ -1037,12 +1033,11 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
               </div>
 
               <div>
-                <label className="font-semibold text-slate-700">Payment Date</label>
-                <input
-                  type="date"
+                <label className="font-semibold text-slate-700 block mb-1">Payment Date</label>
+                <CustomDatePicker
                   value={paymentDate}
-                  onChange={(e) => setPaymentDate(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 bg-slate-50/60 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
+                  onChange={setPaymentDate}
+                  align="right"
                 />
               </div>
 
@@ -1086,23 +1081,23 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                 </div>
 
                 <div>
-                  <label className="font-semibold text-slate-700">Font Family</label>
-                  <select
+                  <label className="font-semibold text-slate-700 block mb-1">Font Family</label>
+                  <CustomSelect
+                    options={[
+                      { value: 'Inter', label: 'Inter (Clean Sans)' },
+                      { value: 'Outfit', label: 'Outfit (Tech Sans)' },
+                      { value: 'Roboto', label: 'Roboto (Corporate)' },
+                      { value: 'Montserrat', label: 'Montserrat (Geometric)' },
+                      { value: 'Poppins', label: 'Poppins (Modern)' },
+                      { value: 'Courier Prime', label: 'Courier Prime (Mono)' },
+                      { value: 'Fira Code', label: 'Fira Code (Tech Mono)' },
+                      { value: 'Georgia', label: 'Georgia (Classic Serif)' },
+                      { value: 'Playfair Display', label: 'Playfair (Luxury Serif)' },
+                      { value: 'Cinzel', label: 'Cinzel (Executive Roman)' },
+                    ]}
                     value={template.fontFamily}
-                    onChange={(e) => setTemplate({ ...template, fontFamily: e.target.value as any })}
-                    className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 bg-slate-50/60 font-semibold text-slate-900 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none cursor-pointer custom-select"
-                  >
-                    <option value="Inter">Inter (Clean Modern Sans)</option>
-                    <option value="Outfit">Outfit (Tech Bold Sans)</option>
-                    <option value="Roboto">Roboto (Corporate Standard)</option>
-                    <option value="Montserrat">Montserrat (Sleek Geometric)</option>
-                    <option value="Poppins">Poppins (Friendly Modern)</option>
-                    <option value="Courier Prime">Courier Prime (Monospace)</option>
-                    <option value="Fira Code">Fira Code (Technical Mono)</option>
-                    <option value="Georgia">Georgia (Classic Serif)</option>
-                    <option value="Playfair Display">Playfair Display (Luxury Serif)</option>
-                    <option value="Cinzel">Cinzel (Executive Roman)</option>
-                  </select>
+                    onChange={(val) => setTemplate({ ...template, fontFamily: val as any })}
+                  />
                 </div>
               </div>
 
