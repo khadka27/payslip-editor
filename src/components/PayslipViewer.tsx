@@ -48,8 +48,8 @@ export const PayslipViewer: React.FC<PayslipViewerProps> = ({
   useEffect(() => {
     const verifyUrl = `${window.location.origin}?verify=${payslip.verificationCode}`;
     QRCode.toDataURL(verifyUrl, { width: 120, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } })
-      .then((url) => setQrCodeDataUrl(url))
-      .catch((err) => console.error(err));
+      .then((url: string) => setQrCodeDataUrl(url))
+      .catch((err: unknown) => console.error(err));
   }, [payslip.verificationCode]);
 
   // Handle PDF Export
