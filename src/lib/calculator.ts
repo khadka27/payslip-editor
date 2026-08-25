@@ -54,9 +54,10 @@ export function calculateSalary(params: {
       itemAmt = Math.round((basicSalary * item.rateOrPercentage) / 100);
     }
     
-    if (item.name.toLowerCase().includes('bonus') || item.name.toLowerCase().includes('incentive') || item.name.toLowerCase().includes('commission')) {
+    const nameLower = item.name.toLowerCase();
+    if (nameLower.includes('bonus') || nameLower.includes('incentive') || nameLower.includes('commission')) {
       totalBonuses += itemAmt;
-    } else if (item.name.toLowerCase().includes('overtime') || item.name.toLowerCase().includes('holiday')) {
+    } else if (nameLower.includes('overtime') || nameLower.includes('holiday')) {
       totalOvertime += itemAmt;
     } else {
       totalAllowances += itemAmt;
@@ -80,7 +81,6 @@ export function calculateSalary(params: {
   let calculatedTax = 0;
 
   if (taxConfig.useProgressiveSlabs && taxConfig.progressiveSlabs && taxConfig.progressiveSlabs.length > 0) {
-    // Progressive Slabs
     taxConfig.progressiveSlabs.forEach((slab) => {
       if (taxableIncome > slab.minIncome) {
         const taxableAmountInSlab = slab.maxIncome 
@@ -94,7 +94,6 @@ export function calculateSalary(params: {
   } else if (taxConfig.customTaxRate !== undefined) {
     calculatedTax = (taxableIncome * taxConfig.customTaxRate) / 100;
   } else {
-    // Default slab rules based on region
     calculatedTax = calculateDefaultTaxByRegion(taxConfig.countryRegion, taxableIncome);
   }
 
@@ -116,7 +115,7 @@ export function calculateSalary(params: {
     if (nameLower.includes('provident') || nameLower.includes('social security') || nameLower.includes('pf') || nameLower.includes('insurance') || nameLower.includes('pension')) {
       employeeContributions += dedAmt;
     } else if (nameLower.includes('tax') || nameLower.includes('income tax') || nameLower.includes('tds')) {
-      // Handled in taxAmount, but if listed explicitly as deduction component, we sync it
+      // Exclude from other deductions to prevent double counting with taxAmount
     } else {
       otherDeductions += dedAmt;
     }
@@ -125,10 +124,10 @@ export function calculateSalary(params: {
   const totalDeductions = taxAmount + employeeContributions + otherDeductions;
   const netSalary = Math.max(0, grossSalary - totalDeductions);
 
-  // 5. Employer Contributions (Separate side costs)
-  const epfEmployer = Math.round(basicSalary * 0.12); // Standard 12% EPF
-  const socialSecurityEmployer = Math.round(grossSalary * 0.05); // Standard 5% SS
-  const healthInsuranceEmployer = 1500;
+  // 5. Employer Contributions
+  const epfEmployer = Math.round(basicSalary * 0.12);
+  const socialSecurityEmployer = Math.round(grossSalary * 0.05);
+  const healthInsuranceEmployer = 150;
   const pensionEmployer = Math.round(basicSalary * 0.0833);
   const totalEmployerContrib = epfEmployer + socialSecurityEmployer + healthInsuranceEmployer + pensionEmployer;
 
@@ -188,30 +187,25 @@ export function calculateSalary(params: {
 }
 
 function calculateDefaultTaxByRegion(region: string, taxableAnnualEquivalent: number): number {
-  // Monthly tax estimation
   const annualIncome = taxableAnnualEquivalent * 12;
   let annualTax = 0;
 
   if (region === 'US') {
-    // US Federal brackets approximation (Single 2026)
     if (annualIncome <= 11600) annualTax = annualIncome * 0.10;
     else if (annualIncome <= 47150) annualTax = 1160 + (annualIncome - 11600) * 0.12;
     else if (annualIncome <= 100525) annualTax = 5426 + (annualIncome - 47150) * 0.22;
     else annualTax = 17168.5 + (annualIncome - 100525) * 0.24;
   } else if (region === 'IN') {
-    // India New Tax Regime approximation
     if (annualIncome <= 300000) annualTax = 0;
     else if (annualIncome <= 700000) annualTax = (annualIncome - 300000) * 0.05;
     else if (annualIncome <= 1000000) annualTax = 20000 + (annualIncome - 700000) * 0.10;
     else annualTax = 50000 + (annualIncome - 1000000) * 0.15;
   } else if (region === 'UK') {
-    // UK PAYE approximation
     const personalAllowance = 12570;
     const taxable = Math.max(0, annualIncome - personalAllowance);
     if (taxable <= 37700) annualTax = taxable * 0.20;
     else annualTax = 37700 * 0.20 + (taxable - 37700) * 0.40;
   } else {
-    // Standard flat 10%
     annualTax = annualIncome * 0.10;
   }
 
@@ -219,7 +213,16 @@ function calculateDefaultTaxByRegion(region: string, taxableAnnualEquivalent: nu
 }
 
 export function formatCurrency(amount: number, currencySymbol: string = '$'): string {
-  return `${currencySymbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formattedNumber = amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (currencySymbol === 'USD' || currencySymbol === '$') return `$${formattedNumber}`;
+  if (currencySymbol === 'EUR' || currencySymbol === '€') return `€${formattedNumber}`;
+  if (currencySymbol === 'GBP' || currencySymbol === '£') return `£${formattedNumber}`;
+  if (currencySymbol === 'INR' || currencySymbol === '₹') return `₹${formattedNumber}`;
+  if (currencySymbol === 'NPR' || currencySymbol === 'NRs') return `NRs ${formattedNumber}`;
+  if (currencySymbol === 'AUD' || currencySymbol === 'A$') return `A$${formattedNumber}`;
+  if (currencySymbol === 'CAD' || currencySymbol === 'C$') return `C$${formattedNumber}`;
+  if (currencySymbol === 'JPY' || currencySymbol === '¥') return `¥${formattedNumber}`;
+  return `${currencySymbol} ${formattedNumber}`;
 }
 
 export function generateVerificationCode(): string {

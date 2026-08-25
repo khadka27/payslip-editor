@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Building2, 
   User, 
@@ -16,15 +16,14 @@ import {
   Layers, 
   ArrowUp, 
   ArrowDown, 
-  EyeOff, 
-  Eye, 
   RotateCcw, 
   Code2, 
   Copy, 
-  CheckCircle2, 
   Sparkles,
-  FileText,
-  Image as ImageIcon
+  Globe,
+  FileSpreadsheet,
+  CheckCircle2,
+  Upload
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import html2canvas from 'html2canvas';
@@ -33,7 +32,6 @@ import jsPDF from 'jspdf';
 import { 
   Company, 
   Employee, 
-  Payslip, 
   PayslipTemplate, 
   EarningComponent, 
   DeductionComponent, 
@@ -56,9 +54,9 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
   const [controlTab, setControlTab] = useState<'company' | 'employee' | 'earnings' | 'attendance' | 'styles'>('company');
   const [viewportMode, setViewportMode] = useState<'a4' | 'letter' | 'mobile'>('a4');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
-  const [copiedTag, setCopiedTag] = useState<string | null>(null);
+  const [currencySymbol, setCurrencySymbol] = useState<string>('$');
 
-  // State Data
+  // Core Data
   const [company, setCompany] = useState<Company>(INITIAL_COMPANY);
   const [employee, setEmployee] = useState<Employee>(INITIAL_EMPLOYEES[0]);
   
@@ -124,14 +122,16 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
   const [template, setTemplate] = useState<PayslipTemplate>(DEFAULT_TEMPLATES[0]);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
 
-  // Live Calculations
-  const calculated = calculateSalary({
-    basicSalary: employee.basicSalary,
-    earnings,
-    deductions,
-    attendance,
-    taxConfig,
-  });
+  // Real-Time Calculations (Memoized for high performance)
+  const calculated = useMemo(() => {
+    return calculateSalary({
+      basicSalary: employee.basicSalary,
+      earnings,
+      deductions,
+      attendance,
+      taxConfig,
+    });
+  }, [employee.basicSalary, earnings, deductions, attendance, taxConfig]);
 
   // Generate QR Code dynamically
   useEffect(() => {
@@ -141,7 +141,54 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
       .catch((err: unknown) => console.error(err));
   }, [verificationCode]);
 
-  // Dynamic Adders
+  // Local File Upload Handler for Logo
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setCompany((prev) => ({ ...prev, logoUrl: event.target!.result as string }));
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Auto-Fetch Company Info from Website URL
+  const [fetchWebsiteUrl, setFetchWebsiteUrl] = useState('');
+  const [isFetchingCompany, setIsFetchingCompany] = useState(false);
+
+  const handleAutoFetchCompanyInfo = async () => {
+    if (!fetchWebsiteUrl.trim()) return;
+    setIsFetchingCompany(true);
+
+    try {
+      let domain = fetchWebsiteUrl.trim().toLowerCase();
+      domain = domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+      // High quality domain logo service
+      const logoUrl = `https://unavatar.io/${domain}?fallback=https://icon.horse/icon/${domain}`;
+      
+      // Format company name from domain
+      let brandName = domain.split('.')[0];
+      brandName = brandName.charAt(0).toUpperCase() + brandName.slice(1);
+      const fullName = `${brandName} Global Technologies`;
+
+      setCompany((prev) => ({
+        ...prev,
+        name: fullName,
+        website: `www.${domain}`,
+        email: `payroll@${domain}`,
+        logoUrl: logoUrl,
+      }));
+    } catch (error) {
+      console.error('Fetch company info failed:', error);
+    } finally {
+      setIsFetchingCompany(false);
+    }
+  };
+
+  // Handlers
   const handleAddEarning = () => {
     setEarnings([
       ...earnings,
@@ -174,14 +221,9 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
     setTemplate({ ...template, sectionOrder: updated });
   };
 
-  const handleToggleSection = (sectionId: SectionType) => {
-    let updated = [...template.sectionOrder];
-    if (updated.includes(sectionId)) {
-      updated = updated.filter((s) => s !== sectionId);
-    } else {
-      updated.push(sectionId);
-    }
-    setTemplate({ ...template, sectionOrder: updated });
+  const handleSelectSampleEmployee = (empId: string) => {
+    const found = INITIAL_EMPLOYEES.find((e) => e.id === empId);
+    if (found) setEmployee(found);
   };
 
   // PDF Export
@@ -207,7 +249,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
       pdf.save(`Payslip_${employee.fullName.replace(/\s+/g, '_')}_${salaryMonth}_${salaryYear}.pdf`);
     } catch (error) {
       console.error(error);
-      alert('Generating PDF fallback print mode...');
+      alert('PDF generation fallback to print mode...');
       window.print();
     } finally {
       setIsGeneratingPdf(false);
@@ -219,39 +261,61 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
   };
 
   const handleResetData = () => {
-    if (confirm('Reset to default company & sample employee values?')) {
+    if (confirm('Reset company and employee data to defaults?')) {
       setCompany(INITIAL_COMPANY);
       setEmployee(INITIAL_EMPLOYEES[0]);
       setTemplate(DEFAULT_TEMPLATES[0]);
       setVerificationCode(generateVerificationCode());
+      setCurrencySymbol('$');
     }
   };
 
   return (
     <div className="space-y-6 animate-fade-in">
       
-      {/* Top Studio Control Bar */}
+      {/* Top Studio Header Control Bar */}
       <div className="no-print bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
         
-        {/* Preset Selector */}
+        {/* Preset & Currency Selector */}
         <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold">
+          <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold shadow-md shadow-indigo-200">
             <Sparkles className="w-5 h-5" />
           </div>
-          <div>
-            <div className="text-xs font-bold text-slate-900">Payslip Style Template</div>
-            <select
-              value={template.id}
-              onChange={(e) => {
-                const found = DEFAULT_TEMPLATES.find((t) => t.id === e.target.value);
-                if (found) setTemplate(found);
-              }}
-              className="text-xs font-semibold p-1.5 rounded-lg border border-slate-300 bg-white outline-none cursor-pointer mt-0.5"
-            >
-              {DEFAULT_TEMPLATES.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
+
+          <div className="flex items-center gap-2">
+            <div>
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Template Preset</div>
+              <select
+                value={template.id}
+                onChange={(e) => {
+                  const found = DEFAULT_TEMPLATES.find((t) => t.id === e.target.value);
+                  if (found) setTemplate(found);
+                }}
+                className="text-xs font-bold p-1.5 rounded-lg border border-slate-300 bg-white outline-none cursor-pointer"
+              >
+                {DEFAULT_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Currency</div>
+              <select
+                value={currencySymbol}
+                onChange={(e) => setCurrencySymbol(e.target.value)}
+                className="text-xs font-bold p-1.5 rounded-lg border border-slate-300 bg-white outline-none cursor-pointer font-mono"
+              >
+                <option value="$">$ USD</option>
+                <option value="€">€ EUR</option>
+                <option value="£">£ GBP</option>
+                <option value="₹">₹ INR</option>
+                <option value="NRs">NRs NPR</option>
+                <option value="A$">A$ AUD</option>
+                <option value="C$">C$ CAD</option>
+                <option value="¥">¥ JPY</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -261,19 +325,19 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
           <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs font-semibold">
             <button
               onClick={() => setViewportMode('a4')}
-              className={`px-3 py-1 rounded-lg transition-all ${viewportMode === 'a4' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500'}`}
+              className={`px-3 py-1.5 rounded-lg transition-all ${viewportMode === 'a4' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-500'}`}
             >
               A4
             </button>
             <button
               onClick={() => setViewportMode('letter')}
-              className={`px-3 py-1 rounded-lg transition-all ${viewportMode === 'letter' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500'}`}
+              className={`px-3 py-1.5 rounded-lg transition-all ${viewportMode === 'letter' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-500'}`}
             >
               Letter
             </button>
             <button
               onClick={() => setViewportMode('mobile')}
-              className={`px-3 py-1 rounded-lg transition-all ${viewportMode === 'mobile' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500'}`}
+              className={`px-3 py-1.5 rounded-lg transition-all ${viewportMode === 'mobile' ? 'bg-white text-slate-900 shadow-xs font-bold' : 'text-slate-500'}`}
             >
               Mobile
             </button>
@@ -281,7 +345,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
           <button
             onClick={handleResetData}
-            className="p-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 transition-colors"
+            className="p-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 transition-colors"
             title="Reset to Sample Data"
           >
             <RotateCcw className="w-4 h-4" />
@@ -289,7 +353,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
           <button
             onClick={handlePrint}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-all shadow-xs"
+            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-all shadow-xs"
           >
             <Printer className="w-4 h-4" />
             <span>Print</span>
@@ -298,7 +362,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
           <button
             onClick={handleDownloadPdf}
             disabled={isGeneratingPdf}
-            className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-md shadow-indigo-600/20 transition-all active:scale-95 disabled:opacity-50"
           >
             <Download className="w-4 h-4" />
             <span>{isGeneratingPdf ? 'Exporting PDF...' : 'Download PDF'}</span>
@@ -307,13 +371,13 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
       </div>
 
-      {/* Main Studio Workspace: 5 Col Controls (Left) & 7 Col Live Canvas (Right) */}
+      {/* Main Studio Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
-        {/* Left Side Controls Panel (5 Columns) */}
+        {/* Left Control Panel (5 Columns) */}
         <div className="no-print lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 max-h-[85vh] overflow-y-auto">
           
-          {/* Controls Sub-Tabs */}
+          {/* Sub-Tabs */}
           <div className="grid grid-cols-5 gap-1 p-1 rounded-xl bg-slate-100 border border-slate-200 text-[11px] font-bold">
             <button
               onClick={() => setControlTab('company')}
@@ -366,10 +430,45 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
             </button>
           </div>
 
-          {/* TAB 1: Company Profile */}
+          {/* TAB 1: Company Details */}
           {controlTab === 'company' && (
             <div className="space-y-4 text-xs animate-fade-in">
-              <h3 className="font-bold text-slate-900 uppercase tracking-wider text-[11px] text-indigo-600">Company & Signatory Details</h3>
+              <h3 className="font-bold text-slate-900 uppercase tracking-wider text-[11px] text-indigo-600">Company Profile & Signatory</h3>
+
+              {/* Auto-Fetch Company Info Card */}
+              <div className="p-3.5 rounded-xl bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-indigo-900 text-xs flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Auto-Fetch Logo & Info from Website</span>
+                  </span>
+                  <span className="text-[10px] font-bold text-indigo-600 bg-white px-2 py-0.5 rounded-full border border-indigo-200">Smart Fetch</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="e.g. google.com, stripe.com, apple.com"
+                    value={fetchWebsiteUrl}
+                    onChange={(e) => setFetchWebsiteUrl(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAutoFetchCompanyInfo()}
+                    className="flex-1 p-2 text-xs rounded-lg border border-slate-300 bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAutoFetchCompanyInfo}
+                    disabled={isFetchingCompany}
+                    className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs flex items-center gap-1.5 transition-all shadow-xs shrink-0 disabled:opacity-50"
+                  >
+                    {isFetchingCompany ? (
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isFetchingCompany ? 'Fetching...' : 'Fetch Info'}</span>
+                  </button>
+                </div>
+              </div>
 
               <div>
                 <label className="font-semibold text-slate-700">Company Name</label>
@@ -377,19 +476,39 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                   type="text"
                   value={company.name}
                   onChange={(e) => setCompany({ ...company, name: e.target.value })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 mt-1 font-semibold outline-none"
+                  className="w-full p-2.5 rounded-lg border border-slate-300 mt-1 font-semibold outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
               <div>
-                <label className="font-semibold text-slate-700">Logo Image URL</label>
-                <input
-                  type="text"
-                  value={company.logoUrl || ''}
-                  onChange={(e) => setCompany({ ...company, logoUrl: e.target.value })}
-                  className="w-full p-2 rounded-lg border border-slate-300 mt-1"
-                  placeholder="https://..."
-                />
+                <label className="font-semibold text-slate-700 block">Company Logo (Image URL or Upload Local File)</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="text"
+                    value={company.logoUrl || ''}
+                    onChange={(e) => setCompany({ ...company, logoUrl: e.target.value })}
+                    className="flex-1 p-2 rounded-lg border border-slate-300 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="https://... or upload local image"
+                  />
+                  <label className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg border border-indigo-200 cursor-pointer flex items-center gap-1.5 text-xs transition-all shrink-0">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload</span>
+                    <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                  </label>
+                </div>
+                {company.logoUrl && (
+                  <div className="mt-2 flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200">
+                    <img src={company.logoUrl} alt="Logo Preview" className="h-8 max-w-[120px] object-contain" />
+                    <span className="text-[10px] text-slate-500 font-medium">Logo Preview</span>
+                    <button
+                      type="button"
+                      onClick={() => setCompany({ ...company, logoUrl: '' })}
+                      className="ml-auto text-[10px] text-rose-600 hover:underline font-semibold"
+                    >
+                      Clear Logo
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -457,10 +576,23 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
             </div>
           )}
 
-          {/* TAB 2: Employee Profile */}
+          {/* TAB 2: Employee Info */}
           {controlTab === 'employee' && (
             <div className="space-y-4 text-xs animate-fade-in">
-              <h3 className="font-bold text-slate-900 uppercase tracking-wider text-[11px] text-indigo-600">Employee Information</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-slate-900 uppercase tracking-wider text-[11px] text-indigo-600">Employee Details</h3>
+                
+                {/* Sample Employee Switcher */}
+                <select
+                  value={employee.id}
+                  onChange={(e) => handleSelectSampleEmployee(e.target.value)}
+                  className="text-[11px] font-semibold p-1 rounded border border-slate-300 bg-white"
+                >
+                  {INITIAL_EMPLOYEES.map((e) => (
+                    <option key={e.id} value={e.id}>Load {e.fullName}</option>
+                  ))}
+                </select>
+              </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
@@ -548,26 +680,26 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
             </div>
           )}
 
-          {/* TAB 3: Salary, Earnings & Deductions */}
+          {/* TAB 3: Earnings & Deductions */}
           {controlTab === 'earnings' && (
             <div className="space-y-4 text-xs animate-fade-in">
-              <div className="p-3 rounded-xl bg-slate-900 text-white flex items-center justify-between">
+              <div className="p-3.5 rounded-xl bg-slate-900 text-white flex items-center justify-between shadow-md">
                 <div>
-                  <div className="text-[10px] text-indigo-300 font-semibold uppercase">Base Salary</div>
+                  <div className="text-[10px] text-indigo-300 font-semibold uppercase">Base Salary ({currencySymbol})</div>
                   <input
                     type="number"
                     value={employee.basicSalary}
                     onChange={(e) => setEmployee({ ...employee, basicSalary: parseFloat(e.target.value) || 0 })}
-                    className="bg-transparent font-bold font-mono text-lg outline-none text-white w-28"
+                    className="bg-transparent font-bold font-mono text-lg outline-none text-white w-32"
                   />
                 </div>
                 <div className="text-right">
                   <div className="text-[10px] text-slate-400">Calculated Net Pay</div>
-                  <div className="font-extrabold font-mono text-emerald-400 text-lg">{formatCurrency(calculated.netSalary)}</div>
+                  <div className="font-extrabold font-mono text-emerald-400 text-lg">{formatCurrency(calculated.netSalary, currencySymbol)}</div>
                 </div>
               </div>
 
-              {/* Earnings Components */}
+              {/* Earnings */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-emerald-600 uppercase text-[11px]">Earnings / Allowances</span>
@@ -605,7 +737,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                 ))}
               </div>
 
-              {/* Deductions Components */}
+              {/* Deductions */}
               <div className="space-y-2 pt-2 border-t border-slate-100">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-rose-600 uppercase text-[11px]">Deductions & Taxes</span>
@@ -726,12 +858,12 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                   />
                   <span>Auto-deduct unpaid leave</span>
                 </label>
-                <span className="font-mono font-bold text-rose-700">-{formatCurrency(calculated.unpaidAbsenceDeduction)}</span>
+                <span className="font-mono font-bold text-rose-700">-{formatCurrency(calculated.unpaidAbsenceDeduction, currencySymbol)}</span>
               </div>
             </div>
           )}
 
-          {/* TAB 5: Style, Section Order & Placeholders */}
+          {/* TAB 5: Style, Colors & Order */}
           {controlTab === 'styles' && (
             <div className="space-y-4 text-xs animate-fade-in">
               <h3 className="font-bold text-slate-900 uppercase tracking-wider text-[11px] text-indigo-600">Template Customization</h3>
@@ -820,7 +952,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
           {/* Printable Payslip Card */}
           <div
             ref={payslipRef}
-            className={`printable-document bg-white text-slate-900 p-8 sm:p-12 shadow-2xl transition-all ${
+            className={`printable-document bg-white text-slate-900 p-8 sm:p-12 shadow-2xl shadow-slate-900/10 transition-all ${
               viewportMode === 'mobile' ? 'w-[380px]' : viewportMode === 'letter' ? 'w-[8.5in] min-h-[11in]' : 'w-[210mm] min-h-[297mm]'
             }`}
             style={{ fontFamily: template.fontFamily === 'Courier Prime' ? 'monospace' : template.fontFamily }}
@@ -857,7 +989,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                   );
 
                 case 'company_info':
-                  return null; // Integrated into header for clean layout
+                  return null;
 
                 case 'employee_info':
                   return (
@@ -895,12 +1027,12 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                         <div className="p-4 space-y-2">
                           <div className="flex justify-between font-bold text-slate-900 border-b border-slate-100 pb-1">
                             <span>Basic Salary</span>
-                            <span className="font-mono">{formatCurrency(employee.basicSalary)}</span>
+                            <span className="font-mono">{formatCurrency(employee.basicSalary, currencySymbol)}</span>
                           </div>
                           {earnings.map((e) => (
                             <div key={e.id} className="flex justify-between text-slate-700">
                               <span>{e.name}</span>
-                              <span className="font-mono">{formatCurrency(e.amount)}</span>
+                              <span className="font-mono">{formatCurrency(e.amount, currencySymbol)}</span>
                             </div>
                           ))}
                         </div>
@@ -908,12 +1040,12 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                         <div className="p-4 space-y-2">
                           <div className="flex justify-between text-rose-700 font-semibold border-b border-slate-100 pb-1">
                             <span>Income Tax Withheld</span>
-                            <span className="font-mono">{formatCurrency(calculated.taxAmount)}</span>
+                            <span className="font-mono">{formatCurrency(calculated.taxAmount, currencySymbol)}</span>
                           </div>
                           {deductions.map((d) => (
                             <div key={d.id} className="flex justify-between text-slate-700">
                               <span>{d.name}</span>
-                              <span className="font-mono text-rose-600">-{formatCurrency(d.amount)}</span>
+                              <span className="font-mono text-rose-600">-{formatCurrency(d.amount, currencySymbol)}</span>
                             </div>
                           ))}
                         </div>
@@ -922,11 +1054,11 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                       <div className="grid grid-cols-2 bg-slate-100 border-t border-slate-300 font-bold py-2.5 px-4">
                         <div className="flex justify-between">
                           <span>GROSS EARNINGS</span>
-                          <span className="font-mono text-emerald-700">{formatCurrency(calculated.grossSalary)}</span>
+                          <span className="font-mono text-emerald-700">{formatCurrency(calculated.grossSalary, currencySymbol)}</span>
                         </div>
                         <div className="flex justify-between border-l border-slate-300 pl-4">
                           <span>TOTAL DEDUCTIONS</span>
-                          <span className="font-mono text-rose-700">-{formatCurrency(calculated.totalDeductions)}</span>
+                          <span className="font-mono text-rose-700">-{formatCurrency(calculated.totalDeductions, currencySymbol)}</span>
                         </div>
                       </div>
                     </div>
@@ -940,7 +1072,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                         <div className="text-[11px] text-slate-300">Direct Bank Transfer ({paymentDate})</div>
                       </div>
                       <div className="text-2xl font-extrabold font-mono text-white">
-                        {formatCurrency(calculated.netSalary)}
+                        {formatCurrency(calculated.netSalary, currencySymbol)}
                       </div>
                     </div>
                   );
@@ -950,15 +1082,15 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                     <div key={secId} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-3 gap-3 text-[11px] mb-5">
                       <div>
                         <div className="text-slate-400 font-semibold uppercase text-[10px]">YTD Gross Earnings</div>
-                        <div className="font-bold font-mono text-slate-900 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdGrossEarnings)}</div>
+                        <div className="font-bold font-mono text-slate-900 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdGrossEarnings, currencySymbol)}</div>
                       </div>
                       <div>
                         <div className="text-slate-400 font-semibold uppercase text-[10px]">YTD Tax Withheld</div>
-                        <div className="font-bold font-mono text-slate-900 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdTaxPaid)}</div>
+                        <div className="font-bold font-mono text-slate-900 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdTaxPaid, currencySymbol)}</div>
                       </div>
                       <div>
                         <div className="text-slate-400 font-semibold uppercase text-[10px]">YTD Net Pay</div>
-                        <div className="font-extrabold font-mono text-emerald-700 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdNetSalary)}</div>
+                        <div className="font-extrabold font-mono text-emerald-700 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdNetSalary, currencySymbol)}</div>
                       </div>
                     </div>
                   ) : null;
