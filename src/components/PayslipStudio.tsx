@@ -332,6 +332,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
           pixelRatio: 2.5,
           backgroundColor: '#ffffff',
           cacheBust: true,
+          skipFonts: true,
         });
       } catch (toPngErr) {
         console.warn('toPng fallback to html2canvas:', toPngErr);
@@ -504,15 +505,15 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
           <button
             onClick={() => setIsFullScreenPreview(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 font-bold text-xs shadow-xs transition-all active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 font-bold text-xs shadow-xs transition-all active:scale-95"
           >
-            <Maximize2 className="w-4 h-4 text-indigo-600" />
-            <span>Full Preview</span>
+            <Maximize2 className="w-4 h-4 text-indigo-600 shrink-0" />
+            <span className="hidden xs:inline sm:inline">Full Preview</span>
           </button>
 
           <button
             onClick={handleResetData}
-            className="p-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 transition-colors"
+            className="p-2 sm:p-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 transition-colors"
             title="Reset to Sample Data"
           >
             <RotateCcw className="w-4 h-4" />
@@ -520,80 +521,80 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
           <button
             onClick={handlePrint}
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-all shadow-xs"
+            className="flex items-center gap-1.5 px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-all shadow-xs"
           >
-            <Printer className="w-4 h-4" />
-            <span>Print</span>
+            <Printer className="w-4 h-4 shrink-0" />
+            <span className="hidden sm:inline">Print</span>
           </button>
 
           <button
             onClick={handleDownloadPdf}
             disabled={isGeneratingPdf}
-            className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-md shadow-indigo-600/20 transition-all active:scale-95 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-md shadow-indigo-600/20 transition-all active:scale-95 disabled:opacity-50"
           >
-            <Download className="w-4 h-4" />
-            <span>{isGeneratingPdf ? 'Exporting PDF...' : 'Download PDF'}</span>
+            <Download className="w-4 h-4 shrink-0" />
+            <span>{isGeneratingPdf ? 'Exporting...' : 'Download PDF'}</span>
           </button>
         </div>
 
       </div>
 
       {/* Main Studio Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
         
         {/* Left Control Panel (5 Columns) */}
-        <div className="no-print lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 max-h-[85vh] overflow-y-auto custom-scrollbar">
+        <div className="no-print lg:col-span-5 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 max-h-[85vh] overflow-y-auto custom-scrollbar">
           
           {/* Sub-Tabs */}
-          <div className="grid grid-cols-5 gap-1 p-1 rounded-xl bg-slate-100 border border-slate-200 text-[11px] font-bold">
+          <div className="grid grid-cols-5 gap-1 p-1 rounded-xl bg-slate-100 border border-slate-200 text-[10px] sm:text-[11px] font-bold">
             <button
               onClick={() => setControlTab('company')}
-              className={`py-2 rounded-lg transition-all flex flex-col items-center justify-center gap-1 ${
+              className={`py-2 px-1 rounded-lg transition-all flex flex-col items-center justify-center gap-1 ${
                 controlTab === 'company' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
-              <Building2 className="w-3.5 h-3.5" />
-              <span>Company</span>
+              <Building2 className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate w-full text-center">Company</span>
             </button>
 
             <button
               onClick={() => setControlTab('employee')}
-              className={`py-2 rounded-lg transition-all flex flex-col items-center justify-center gap-1 ${
+              className={`py-2 px-1 rounded-lg transition-all flex flex-col items-center justify-center gap-1 ${
                 controlTab === 'employee' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
-              <User className="w-3.5 h-3.5" />
-              <span>Employee</span>
+              <User className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate w-full text-center">Employee</span>
             </button>
 
             <button
               onClick={() => setControlTab('earnings')}
-              className={`py-2 rounded-lg transition-all flex flex-col items-center justify-center gap-1 ${
+              className={`py-2 px-1 rounded-lg transition-all flex flex-col items-center justify-center gap-1 ${
                 controlTab === 'earnings' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
-              <DollarSign className="w-3.5 h-3.5" />
-              <span>Salary</span>
+              <DollarSign className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate w-full text-center">Salary</span>
             </button>
 
             <button
               onClick={() => setControlTab('attendance')}
-              className={`py-2 rounded-lg transition-all flex flex-col items-center justify-center gap-1 ${
+              className={`py-2 px-1 rounded-lg transition-all flex flex-col items-center justify-center gap-1 ${
                 controlTab === 'attendance' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
-              <Calendar className="w-3.5 h-3.5" />
-              <span>Leaves</span>
+              <Calendar className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate w-full text-center">Leaves</span>
             </button>
 
             <button
               onClick={() => setControlTab('styles')}
-              className={`py-2 rounded-lg transition-all flex flex-col items-center justify-center gap-1 ${
+              className={`py-2 px-1 rounded-lg transition-all flex flex-col items-center justify-center gap-1 ${
                 controlTab === 'styles' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
-              <Palette className="w-3.5 h-3.5" />
-              <span>Design</span>
+              <Palette className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate w-full text-center">Design</span>
             </button>
           </div>
 

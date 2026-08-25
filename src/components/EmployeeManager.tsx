@@ -200,7 +200,7 @@ export const EmployeeManager: React.FC<EmployeeManagerProps> = ({ employees, onS
           <select
             value={selectedDept}
             onChange={(e) => setSelectedDept(e.target.value)}
-            className="text-xs p-2.5 rounded-lg border border-slate-300 bg-white outline-none"
+            className="text-xs p-2.5 rounded-xl border border-slate-300 bg-white font-semibold text-slate-800 outline-none custom-select shadow-2xs hover:bg-slate-50 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500"
           >
             <option value="all">All Departments</option>
             {departments.map((d) => (
@@ -211,7 +211,7 @@ export const EmployeeManager: React.FC<EmployeeManagerProps> = ({ employees, onS
           <select
             value={selectedType}
             onChange={(e) => setSelectedType(e.target.value)}
-            className="text-xs p-2.5 rounded-lg border border-slate-300 bg-white outline-none"
+            className="text-xs p-2.5 rounded-xl border border-slate-300 bg-white font-semibold text-slate-800 outline-none custom-select shadow-2xs hover:bg-slate-50 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500"
           >
             <option value="all">All Types</option>
             <option value="full_time">Full-time</option>
@@ -227,9 +227,74 @@ export const EmployeeManager: React.FC<EmployeeManagerProps> = ({ employees, onS
 
       </div>
 
-      {/* Employee List Table */}
+      {/* Employee List - Mobile Cards (< md) & Desktop Table (>= md) */}
       <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
+        
+        {/* Mobile View: Cards */}
+        <div className="block md:hidden divide-y divide-slate-100">
+          {filteredEmployees.map((emp) => (
+            <div key={emp.id} className="p-4 space-y-3 hover:bg-slate-50/80 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-full bg-slate-200 overflow-hidden flex items-center justify-center font-bold text-slate-600 text-xs">
+                    {emp.photoUrl ? (
+                      <img src={emp.photoUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      emp.fullName.charAt(0)
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-bold text-slate-900 text-sm">{emp.fullName}</div>
+                    <div className="text-[11px] text-slate-500 font-mono font-bold text-indigo-600">{emp.id} • {emp.designation}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleOpenEdit(emp)}
+                    className="p-2 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600"
+                    title="Edit Employee"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(emp.id)}
+                    className="p-2 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100"
+                    title="Delete Employee"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-100 text-slate-600">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Department</span>
+                  <span className="font-semibold text-slate-800">{emp.department}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Base Salary</span>
+                  <span className="font-bold font-mono text-emerald-700">{formatCurrency(emp.basicSalary)}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Bank Info</span>
+                  <span className="font-mono text-[11px]">{emp.bankName} (•••• {emp.bankAccountNumber.slice(-4)})</span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Contact</span>
+                  <span className="truncate block text-[11px]">{emp.email}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+          {filteredEmployees.length === 0 && (
+            <div className="p-8 text-center text-slate-400 text-xs">
+              No employees matched your filter criteria.
+            </div>
+          )}
+        </div>
+
+        {/* Desktop View: Table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
               <tr>
