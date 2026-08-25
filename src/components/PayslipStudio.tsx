@@ -260,31 +260,181 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
     if (found) setEmployee(found);
   };
 
-  // PDF Export
+  // Cross-Origin Image Converter Helper for Canvas Export
+  const convertImageToDataUrl = (url: string): Promise<string> => {
+    return new Promise((resolve) => {
+      if (!url || url.startsWith('data:')) {
+        resolve(url);
+        return;
+      }
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const c = document.createElement('canvas');
+          c.width = img.naturalWidth || img.width;
+          c.height = img.naturalHeight || img.height;
+          const ctx = c.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0);
+            resolve(c.toDataURL('image/png'));
+            return;
+          }
+        } catch (err) {
+          console.warn('Canvas toDataURL failed for cross-origin image:', err);
+        }
+        resolve('');
+      };
+      img.onerror = () => resolve('');
+      img.src = url;
+    });
+  };
+
+  // Helper to convert any CSS color (including modern lab, oklab, oklch) to standard hex/rgb via 2D Canvas Context
+  const convertCssColorToRgb = (colorStr: string): string => {
+    if (!colorStr || colorStr === 'transparent' || colorStr === 'inherit') return colorStr;
+    if (!colorStr.includes('lab') && !colorStr.includes('oklch') && !colorStr.includes('color(')) return colorStr;
+    
+    try {
+      const c = document.createElement('canvas');
+      c.width = 1;
+      c.height = 1;
+      const ctx = c.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = colorStr;
+        return ctx.fillStyle; // Canvas automatically normalizes lab/oklab/oklch to standard #rrggbb or rgb()
+      }
+    } catch (err) {
+      console.warn('Color conversion failed:', err);
+    }
+    return '#ffffff';
+  };
+
+  // High Quality PDF Export Engine (jsPDF + html2canvas)
   const handleDownloadPdf = async () => {
     if (!payslipRef.current) return;
     setIsGeneratingPdf(true);
 
     try {
       const element = payslipRef.current;
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      });
 
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      // Convert external logo to base64 Data URL to prevent canvas taint
+      if (company.logoUrl && !company.logoUrl.startsWith('data:')) {
+        const dataUrl = await convertImageToDataUrl(company.logoUrl);
+        if (dataUrl) {
+          setCompany((prev) => ({ ...prev, logoUrl: dataUrl }));
+          await new Promise((r) => setTimeout(r, 60));
+        }
+      }
 
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`Payslip_${employee.fullName.replace(/\s+/g, '_')}_${salaryMonth}_${salaryYear}.pdf`);
+      // Temporarily remove preview scale transform for unclipped rendering
+      const originalTransform = element.style.transform;
+      element.style.transform = 'none';
+
+      // Sanitize cloned DOM styles to convert modern CSS lab()/oklab()/oklch() functions for html2canvas compatibility
+      const sanitizeClonedNode = (clonedDoc: Document) => {
+        const elements = clonedDoc.querySelectorAll('*');
+        elements.forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          const style = clonedDoc.defaultView?.getComputedStyle(htmlEl);
+          if (!style) return;
+
+          const colorProps = ['backgroundColor', 'color', 'borderColor', 'outlineColor', 'fill', 'stroke'] as const;
+          colorProps.forEach((prop) => {
+            const val = style[prop];
+            if (val && (val.includes('lab') || val.includes('oklch') || val.includes('color('))) {
+              const sanitized = convertCssColorToRgb(val);
+              (htmlEl.style as any)[prop] = sanitized || (prop === 'backgroundColor' ? '#ffffff' : '#0f172a');
+            }
+          });
+        });
+      };
+
+      let canvas: HTMLCanvasElement;
+      try {
+        canvas = await html2canvas(element, {
+          scale: 2.5,
+          useCORS: true,
+          allowTaint: false,
+          logging: false,
+          backgroundColor: '#ffffff',
+          onclone: sanitizeClonedNode,
+        });
+      } catch (err) {
+        console.warn('Canvas capture fallback:', err);
+        canvas = await html2canvas(element, {
+          scale: 2,
+          useCORS: false,
+          allowTaint: false,
+          backgroundColor: '#ffffff',
+          onclone: sanitizeClonedNode,
+          ignoreElements: (el) => el.tagName === 'IMG' && !(el as HTMLImageElement).src.startsWith('data:'),
+        });
+      }
+
+      // Restore zoom transform immediately
+      element.style.transform = originalTransform;
+
+      let imgData = '';
+      try {
+        imgData = canvas.toDataURL('image/png', 1.0);
+      } catch (taintErr) {
+        console.warn('Taint fallback capture:', taintErr);
+        const cleanCanvas = await html2canvas(element, {
+          scale: 2,
+          useCORS: false,
+          allowTaint: false,
+          backgroundColor: '#ffffff',
+          ignoreElements: (el) => el.tagName === 'IMG' && !(el as HTMLImageElement).src.startsWith('data:'),
+        });
+        imgData = cleanCanvas.toDataURL('image/png');
+      }
+
+      const isLetter = viewportMode === 'letter';
+      const pdf = new jsPDF('p', 'mm', isLetter ? 'letter' : 'a4');
+      
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      // Page 1
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+      heightLeft -= pageHeight;
+
+      // Multi-page support if content overflows single page
+      while (heightLeft > 5) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+        heightLeft -= pageHeight;
+      }
+
+      const fileName = `Payslip_${company.name.replace(/\s+/g, '_')}_${salaryMonth}_${salaryYear}.pdf`;
+      pdf.save(fileName);
     } catch (error) {
-      console.error(error);
-      alert('PDF generation fallback to print mode...');
-      window.print();
+      console.error('Library PDF export error:', error);
+      // Clean silent fallback via jsPDF without window.print or alert popups
+      try {
+        const element = payslipRef.current;
+        const canvas = await html2canvas(element, {
+          scale: 2,
+          useCORS: false,
+          allowTaint: false,
+          ignoreElements: (el) => el.tagName === 'IMG' && !(el as HTMLImageElement).src.startsWith('data:'),
+        });
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        pdf.addImage(imgData, 'PNG', 0, 0, 210, (canvas.height * 210) / canvas.width);
+        pdf.save(`Payslip_${salaryMonth}_${salaryYear}.pdf`);
+      } catch (fallbackErr) {
+        console.error('Final fallback error:', fallbackErr);
+      }
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -910,23 +1060,33 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
+                  <label className="font-semibold text-slate-700">Paid Leave Days</label>
+                  <input
+                    type="number"
+                    value={attendance.paidLeave || 0}
+                    onChange={(e) => setAttendance({ ...attendance, paidLeave: parseInt(e.target.value) || 0 })}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 font-mono text-emerald-700 font-extrabold bg-slate-50/60 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+                <div>
                   <label className="font-semibold text-slate-700">Unpaid Leave Days</label>
                   <input
                     type="number"
                     value={attendance.unpaidLeave}
                     onChange={(e) => setAttendance({ ...attendance, unpaidLeave: parseInt(e.target.value) || 0 })}
-                    className="w-full p-2 rounded-lg border border-slate-300 mt-1 font-mono text-rose-600 font-bold"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 font-mono text-rose-600 font-extrabold bg-slate-50/60 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
                   />
                 </div>
-                <div>
-                  <label className="font-semibold text-slate-700">Payment Date</label>
-                  <input
-                    type="date"
-                    value={paymentDate}
-                    onChange={(e) => setPaymentDate(e.target.value)}
-                    className="w-full p-2 rounded-lg border border-slate-300 mt-1"
-                  />
-                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700">Payment Date</label>
+                <input
+                  type="date"
+                  value={paymentDate}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 bg-slate-50/60 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
+                />
               </div>
 
               <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-between text-slate-800">
@@ -1074,27 +1234,27 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                 
                 case 'header':
                   return (
-                    <div key={secId} className="flex items-start justify-between border-b-2 pb-5 mb-5" style={{ borderColor: template.primaryColor }}>
+                    <div key={secId} className={`flex items-start justify-between border-b-2 pb-5 mb-5 gap-3 ${viewportMode === 'mobile' ? 'flex-col sm:flex-row' : ''}`} style={{ borderColor: template.primaryColor }}>
                       <div className="space-y-1">
                         {template.showCompanyLogo && company.logoUrl ? (
-                          <img src={company.logoUrl} alt="Logo" className="h-12 max-w-[180px] object-contain mb-1" />
+                          <img src={company.logoUrl} alt="Logo" className="h-10 sm:h-12 max-w-[180px] object-contain mb-1" />
                         ) : (
                           <div className="w-10 h-10 rounded-lg text-white font-bold flex items-center justify-center text-lg mb-1" style={{ backgroundColor: template.primaryColor }}>
                             {company.name.charAt(0)}
                           </div>
                         )}
-                        <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">{company.name}</h1>
-                        <p className="text-[11px] text-slate-500 max-w-sm">{company.address}, {company.city}, {company.country}</p>
-                        <p className="text-[10px] text-slate-400 font-mono">Reg: {company.registrationNumber} • Tax ID: {company.taxPanVatNumber}</p>
+                        <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight leading-tight">{company.name}</h1>
+                        <p className="text-[10px] sm:text-[11px] text-slate-500 max-w-sm">{company.address}, {company.city}, {company.country}</p>
+                        <p className="text-[9px] sm:text-[10px] text-slate-400 font-mono">Reg: {company.registrationNumber} • Tax ID: {company.taxPanVatNumber}</p>
                       </div>
 
-                      <div className="text-right space-y-1">
-                        <span className="inline-block px-3 py-1 rounded text-xs font-bold uppercase tracking-wider border" style={{ backgroundColor: `${template.primaryColor}15`, color: template.primaryColor, borderColor: `${template.primaryColor}40` }}>
+                      <div className={`${viewportMode === 'mobile' ? 'text-left' : 'text-right'} space-y-1 shrink-0`}>
+                        <span className="inline-block px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-bold uppercase tracking-wider border" style={{ backgroundColor: `${template.primaryColor}15`, color: template.primaryColor, borderColor: `${template.primaryColor}40` }}>
                           CONFIDENTIAL PAYSLIP
                         </span>
-                        <div className="text-base font-extrabold font-mono text-slate-900 mt-2">{payslipNumber}</div>
-                        <div className="text-[11px] font-semibold text-slate-600">{salaryMonth} {salaryYear}</div>
-                        <div className="text-[10px] text-slate-400">Pay Date: {paymentDate}</div>
+                        <div className="text-sm sm:text-base font-extrabold font-mono text-slate-900 mt-1">{payslipNumber}</div>
+                        <div className="text-[10px] sm:text-[11px] font-semibold text-slate-600">{salaryMonth} {salaryYear}</div>
+                        <div className="text-[9px] sm:text-[10px] text-slate-400">Pay Date: {paymentDate}</div>
                       </div>
                     </div>
                   );
@@ -1104,21 +1264,22 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
                 case 'employee_info':
                   return (
-                    <div key={secId} className="grid grid-cols-2 gap-6 p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs mb-5">
+                    <div key={secId} className={`grid gap-4 p-3.5 sm:p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs mb-5 ${viewportMode === 'mobile' ? 'grid-cols-1 text-[11px]' : 'grid-cols-2'}`}>
                       <div className="space-y-1.5">
-                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Employee Name:</span> <strong className="text-slate-900">{employee.fullName}</strong></div>
-                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Employee ID:</span> <span className="font-mono font-bold">{employee.id}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Designation:</span> <span>{employee.designation}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Department:</span> <span>{employee.department}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Joining Date:</span> <span>{employee.joiningDate}</span></div>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Employee Name:</span> <strong className="text-slate-900 truncate">{employee.fullName}</strong></div>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Employee ID:</span> <span className="font-mono font-bold">{employee.id}</span></div>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Designation:</span> <span className="truncate">{employee.designation}</span></div>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Department:</span> <span className="truncate">{employee.department}</span></div>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Joining Date:</span> <span>{employee.joiningDate}</span></div>
                       </div>
 
-                      <div className="space-y-1.5 border-l border-slate-200 pl-6">
-                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Bank Name:</span> <span>{employee.bankName}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Account Number:</span> <span className="font-mono">•••• {employee.bankAccountNumber.slice(-4)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Tax / PAN ID:</span> <span className="font-mono">{employee.taxPanNumber}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Working Days:</span> <span>{attendance.workingDays} / Present: {attendance.presentDays}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Unpaid Absences:</span> <span>{attendance.unpaidLeave} days</span></div>
+                      <div className={`space-y-1.5 ${viewportMode === 'mobile' ? 'border-t pt-3 border-slate-200' : 'border-l pl-6 border-slate-200'}`}>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Bank Name:</span> <span className="truncate">{employee.bankName}</span></div>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Account Number:</span> <span className="font-mono">•••• {employee.bankAccountNumber.slice(-4)}</span></div>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Tax / PAN ID:</span> <span className="font-mono">{employee.taxPanNumber}</span></div>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Working Days:</span> <span>{attendance.workingDays} / Pres: {attendance.presentDays}</span></div>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Paid Leave:</span> <span className="font-mono text-emerald-700 font-bold">{attendance.paidLeave || 0} days</span></div>
+                        <div className="flex items-center justify-between gap-2"><span className="text-slate-500 font-semibold shrink-0">Unpaid Absences:</span> <span>{attendance.unpaidLeave} days</span></div>
                       </div>
                     </div>
                   );
@@ -1129,47 +1290,47 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                 case 'earnings_deductions_table':
                   return (
                     <div key={secId} className="border border-slate-300 rounded-lg overflow-hidden text-xs mb-5">
-                      <div className="grid grid-cols-2 text-white font-bold py-2.5 px-4 text-[11px] uppercase tracking-wider" style={{ backgroundColor: template.primaryColor }}>
-                        <span>Earnings Component</span>
-                        <span className="border-l border-white/20 pl-4">Deductions Component</span>
+                      <div className="grid grid-cols-2 text-white font-bold py-2 px-3 sm:py-2.5 sm:px-4 text-[10px] sm:text-[11px] uppercase tracking-wider" style={{ backgroundColor: template.primaryColor }}>
+                        <span className="truncate">Earnings</span>
+                        <span className="border-l border-white/20 pl-2 sm:pl-4 truncate">Deductions</span>
                       </div>
 
                       <div className="grid grid-cols-2 divide-x divide-slate-200">
-                        <div className="p-4 space-y-2">
-                          <div className="flex justify-between font-bold text-slate-900 border-b border-slate-100 pb-1">
-                            <span>Basic Salary</span>
-                            <span className="font-mono">{formatCurrency(employee.basicSalary, currencySymbol)}</span>
+                        <div className={`space-y-1.5 ${viewportMode === 'mobile' ? 'p-2.5 text-[10px]' : 'p-4 text-xs space-y-2'}`}>
+                          <div className="flex items-center justify-between font-bold text-slate-900 border-b border-slate-100 pb-1 gap-1">
+                            <span className="truncate">Basic Salary</span>
+                            <span className="font-mono shrink-0">{formatCurrency(employee.basicSalary, currencySymbol)}</span>
                           </div>
                           {earnings.map((e) => (
-                            <div key={e.id} className="flex justify-between text-slate-700">
-                              <span>{e.name}</span>
-                              <span className="font-mono">{formatCurrency(e.amount, currencySymbol)}</span>
+                            <div key={e.id} className="flex items-center justify-between text-slate-700 gap-1">
+                              <span className="truncate">{e.name}</span>
+                              <span className="font-mono shrink-0">{formatCurrency(e.amount, currencySymbol)}</span>
                             </div>
                           ))}
                         </div>
 
-                        <div className="p-4 space-y-2">
-                          <div className="flex justify-between text-rose-700 font-semibold border-b border-slate-100 pb-1">
-                            <span>Income Tax Withheld</span>
-                            <span className="font-mono">{formatCurrency(calculated.taxAmount, currencySymbol)}</span>
+                        <div className={`space-y-1.5 ${viewportMode === 'mobile' ? 'p-2.5 text-[10px]' : 'p-4 text-xs space-y-2'}`}>
+                          <div className="flex items-center justify-between text-rose-700 font-semibold border-b border-slate-100 pb-1 gap-1">
+                            <span className="truncate">Tax Withheld</span>
+                            <span className="font-mono shrink-0">{formatCurrency(calculated.taxAmount, currencySymbol)}</span>
                           </div>
                           {deductions.map((d) => (
-                            <div key={d.id} className="flex justify-between text-slate-700">
-                              <span>{d.name}</span>
-                              <span className="font-mono text-rose-600">-{formatCurrency(d.amount, currencySymbol)}</span>
+                            <div key={d.id} className="flex items-center justify-between text-slate-700 gap-1">
+                              <span className="truncate">{d.name}</span>
+                              <span className="font-mono text-rose-600 shrink-0">-{formatCurrency(d.amount, currencySymbol)}</span>
                             </div>
                           ))}
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 bg-slate-100 border-t border-slate-300 font-bold py-2.5 px-4">
-                        <div className="flex justify-between">
-                          <span>GROSS EARNINGS</span>
-                          <span className="font-mono text-emerald-700">{formatCurrency(calculated.grossSalary, currencySymbol)}</span>
+                      <div className="grid grid-cols-2 bg-slate-100 border-t border-slate-300 font-bold py-2 px-2.5 sm:py-2.5 sm:px-4 text-[10px] sm:text-xs">
+                        <div className="flex items-center justify-between gap-1 pr-1">
+                          <span className="truncate">GROSS</span>
+                          <span className="font-mono text-emerald-700 shrink-0">{formatCurrency(calculated.grossSalary, currencySymbol)}</span>
                         </div>
-                        <div className="flex justify-between border-l border-slate-300 pl-4">
-                          <span>TOTAL DEDUCTIONS</span>
-                          <span className="font-mono text-rose-700">-{formatCurrency(calculated.totalDeductions, currencySymbol)}</span>
+                        <div className="flex items-center justify-between border-l border-slate-300 pl-2 sm:pl-4 gap-1">
+                          <span className="truncate">DEDUCTIONS</span>
+                          <span className="font-mono text-rose-700 shrink-0">-{formatCurrency(calculated.totalDeductions, currencySymbol)}</span>
                         </div>
                       </div>
                     </div>
@@ -1177,12 +1338,12 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
                 case 'net_salary_callout':
                   return (
-                    <div key={secId} className="p-5 rounded-xl text-white flex items-center justify-between shadow-md mb-5" style={{ backgroundColor: template.primaryColor }}>
+                    <div key={secId} className={`rounded-xl text-white flex justify-between shadow-md mb-5 ${viewportMode === 'mobile' ? 'p-3 flex-col gap-1 items-start' : 'p-5 flex-row items-center'}`} style={{ backgroundColor: template.primaryColor }}>
                       <div>
-                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-200">NET SALARY PAYABLE</div>
-                        <div className="text-[11px] text-slate-300">Direct Bank Transfer ({paymentDate})</div>
+                        <div className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-200">NET SALARY PAYABLE</div>
+                        <div className="text-[9px] sm:text-[11px] text-slate-300">Direct Bank Transfer ({paymentDate})</div>
                       </div>
-                      <div className="text-2xl font-extrabold font-mono text-white">
+                      <div className="text-xl sm:text-2xl font-extrabold font-mono text-white">
                         {formatCurrency(calculated.netSalary, currencySymbol)}
                       </div>
                     </div>
@@ -1190,18 +1351,18 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
                 case 'ytd_summary':
                   return template.showYtd ? (
-                    <div key={secId} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-3 gap-3 text-[11px] mb-5">
-                      <div>
-                        <div className="text-slate-400 font-semibold uppercase text-[10px]">YTD Gross Earnings</div>
-                        <div className="font-bold font-mono text-slate-900 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdGrossEarnings, currencySymbol)}</div>
+                    <div key={secId} className={`rounded-xl bg-slate-50 border border-slate-200 grid gap-2 mb-5 ${viewportMode === 'mobile' ? 'grid-cols-1 p-2.5 text-[10px]' : 'grid-cols-3 gap-3 p-3.5 text-[11px]'}`}>
+                      <div className="flex justify-between sm:block">
+                        <div className="text-slate-400 font-semibold uppercase text-[9px] sm:text-[10px]">YTD Gross</div>
+                        <div className="font-bold font-mono text-slate-900 sm:mt-0.5">{formatCurrency(calculated.updatedYtd.ytdGrossEarnings, currencySymbol)}</div>
                       </div>
-                      <div>
-                        <div className="text-slate-400 font-semibold uppercase text-[10px]">YTD Tax Withheld</div>
-                        <div className="font-bold font-mono text-slate-900 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdTaxPaid, currencySymbol)}</div>
+                      <div className="flex justify-between sm:block">
+                        <div className="text-slate-400 font-semibold uppercase text-[9px] sm:text-[10px]">YTD Tax</div>
+                        <div className="font-bold font-mono text-slate-900 sm:mt-0.5">{formatCurrency(calculated.updatedYtd.ytdTaxPaid, currencySymbol)}</div>
                       </div>
-                      <div>
-                        <div className="text-slate-400 font-semibold uppercase text-[10px]">YTD Net Pay</div>
-                        <div className="font-extrabold font-mono text-emerald-700 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdNetSalary, currencySymbol)}</div>
+                      <div className="flex justify-between sm:block">
+                        <div className="text-slate-400 font-semibold uppercase text-[9px] sm:text-[10px]">YTD Net Pay</div>
+                        <div className="font-extrabold font-mono text-emerald-700 sm:mt-0.5">{formatCurrency(calculated.updatedYtd.ytdNetSalary, currencySymbol)}</div>
                       </div>
                     </div>
                   ) : null;
@@ -1341,6 +1502,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                         <div className="flex justify-between"><span className="text-slate-500 font-semibold">Account Number:</span> <span className="font-mono">•••• {employee.bankAccountNumber.slice(-4)}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500 font-semibold">Tax / PAN ID:</span> <span className="font-mono">{employee.taxPanNumber}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500 font-semibold">Working Days:</span> <span>{attendance.workingDays} / Present: {attendance.presentDays}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Paid Leave:</span> <span className="font-mono text-emerald-700 font-bold">{attendance.paidLeave || 0} days</span></div>
                         <div className="flex justify-between"><span className="text-slate-500 font-semibold">Unpaid Absences:</span> <span>{attendance.unpaidLeave} days</span></div>
                       </div>
                     </div>
