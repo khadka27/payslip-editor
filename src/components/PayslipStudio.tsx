@@ -475,7 +475,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                   const found = DEFAULT_TEMPLATES.find((t) => t.id === e.target.value);
                   if (found) setTemplate(found);
                 }}
-                className="text-xs font-bold p-1.5 rounded-lg border border-slate-300 bg-white outline-none cursor-pointer"
+                className="text-xs font-extrabold px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-800 shadow-2xs hover:bg-slate-50 outline-none cursor-pointer custom-select"
               >
                 {DEFAULT_TEMPLATES.map((t) => (
                   <option key={t.id} value={t.id}>{t.name}</option>
@@ -484,11 +484,11 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
             </div>
 
             <div>
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Currency</div>
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Currency</div>
               <select
                 value={currencySymbol}
                 onChange={(e) => setCurrencySymbol(e.target.value)}
-                className="text-xs font-bold p-1.5 rounded-lg border border-slate-300 bg-white outline-none cursor-pointer font-mono"
+                className="text-xs font-extrabold px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-800 shadow-2xs hover:bg-slate-50 outline-none cursor-pointer font-mono custom-select"
               >
                 <option value="$">$ USD</option>
                 <option value="€">€ EUR</option>
@@ -586,7 +586,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
         {/* Left Control Panel (5 Columns) */}
-        <div className="no-print lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 max-h-[85vh] overflow-y-auto">
+        <div className="no-print lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 max-h-[85vh] overflow-y-auto custom-scrollbar">
           
           {/* Sub-Tabs */}
           <div className="grid grid-cols-5 gap-1 p-1 rounded-xl bg-slate-100 border border-slate-200 text-[11px] font-bold">
@@ -1019,7 +1019,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                   <select
                     value={salaryMonth}
                     onChange={(e) => setSalaryMonth(e.target.value)}
-                    className="w-full p-2 rounded-lg border border-slate-300 mt-1 bg-white"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 bg-slate-50/60 font-semibold text-slate-900 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none cursor-pointer custom-select"
                   >
                     {['January','February','March','April','May','June','July','August','September','October','November','December'].map((m) => (
                       <option key={m} value={m}>{m}</option>
@@ -1133,7 +1133,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                   <select
                     value={template.fontFamily}
                     onChange={(e) => setTemplate({ ...template, fontFamily: e.target.value as any })}
-                    className="w-full p-2 rounded-lg border border-slate-300 mt-1 bg-white"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 bg-slate-50/60 font-semibold text-slate-900 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none cursor-pointer custom-select"
                   >
                     <option value="Inter">Inter (Clean Modern Sans)</option>
                     <option value="Outfit">Outfit (Tech Bold Sans)</option>
@@ -1214,7 +1214,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
         </div>
 
         {/* Right Side LIVE Canvas Display (7 Columns) */}
-        <div className="lg:col-span-7 bg-slate-200/80 p-4 sm:p-8 rounded-2xl border border-slate-300/80 flex flex-col items-center justify-start overflow-auto">
+        <div className="lg:col-span-7 bg-slate-200/80 p-4 sm:p-8 rounded-2xl border border-slate-300/80 flex flex-col items-center justify-start overflow-auto custom-scrollbar">
           
           {/* Printable Payslip Card */}
           <div
