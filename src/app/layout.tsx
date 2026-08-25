@@ -1,11 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Outfit, Roboto, Courier_Prime } from "next/font/google";
 import "./globals.css";
-
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
-const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit" });
-const roboto = Roboto({ weight: ["400", "500", "700"], subsets: ["latin"], variable: "--font-roboto" });
-const courier = Courier_Prime({ weight: ["400", "700"], subsets: ["latin"], variable: "--font-courier" });
 
 export const metadata: Metadata = {
   title: "PaySlip Studio — Free Online Payslip Editor & Generator",
@@ -18,15 +12,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html
-      lang="en"
-      className={`${inter.variable} ${outfit.variable} ${roboto.variable} ${courier.variable} h-full antialiased`}
-    >
+    <html lang="en" className="h-full antialiased">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&family=Roboto:wght@300;400;500;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Courier+Prime:wght@400;700&family=Fira+Code:wght@400;600&family=Inter:wght@300;400;500;600;700;800&family=Montserrat:wght@400;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Playfair+Display:wght@500;700&family=Poppins:wght@400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap"
           rel="stylesheet"
         />
       </head>

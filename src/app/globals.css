@@ -12,6 +12,16 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Hide number input spinners for modern financial inputs */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
 /* Animations */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }

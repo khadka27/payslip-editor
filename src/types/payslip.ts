@@ -217,7 +217,7 @@ export interface PayslipTemplate {
   primaryColor: string; // hex
   secondaryColor: string; // hex
   accentColor: string; // hex
-  fontFamily: 'Inter' | 'Roboto' | 'Outfit' | 'Courier Prime' | 'Georgia';
+  fontFamily: 'Inter' | 'Roboto' | 'Outfit' | 'Courier Prime' | 'Georgia' | 'Montserrat' | 'Poppins' | 'Playfair Display' | 'Fira Code' | 'Cinzel';
   fontSize: 'xs' | 'sm' | 'base';
   borderStyle: 'solid' | 'dashed' | 'none' | 'double';
   showCompanyLogo: boolean;

@@ -45,7 +45,7 @@ export const DEFAULT_TEMPLATES: PayslipTemplate[] = [
     description: 'Clean, spacious, modern tech-startup style layout with sleek typography.',
     pageSize: 'a4',
     orientation: 'portrait',
-    primaryColor: '#0f172a', // Slate 900
+    primaryColor: '#0d9488', // Teal 600
     secondaryColor: '#f1f5f9',
     accentColor: '#475569',
     fontFamily: 'Outfit',

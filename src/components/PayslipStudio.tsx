@@ -23,7 +23,13 @@ import {
   Globe,
   FileSpreadsheet,
   CheckCircle2,
-  Upload
+  Upload,
+  Maximize2,
+  Minimize2,
+  ZoomIn,
+  ZoomOut,
+  Eye,
+  GripVertical
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import html2canvas from 'html2canvas';
@@ -55,6 +61,8 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
   const [viewportMode, setViewportMode] = useState<'a4' | 'letter' | 'mobile'>('a4');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [currencySymbol, setCurrencySymbol] = useState<string>('$');
+  const [isFullScreenPreview, setIsFullScreenPreview] = useState(false);
+  const [zoomScale, setZoomScale] = useState<number>(0.85);
 
   // Core Data
   const [company, setCompany] = useState<Company>(INITIAL_COMPANY);
@@ -221,6 +229,32 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
     setTemplate({ ...template, sectionOrder: updated });
   };
 
+  // Drag and Drop Section Reordering
+  const [draggedSectionIdx, setDraggedSectionIdx] = useState<number | null>(null);
+
+  const handleDragStartSection = (e: React.DragEvent, index: number) => {
+    setDraggedSectionIdx(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOverSection = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDropSection = (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (draggedSectionIdx === null || draggedSectionIdx === targetIndex) return;
+
+    const updated = [...template.sectionOrder];
+    const itemToMove = updated[draggedSectionIdx];
+    updated.splice(draggedSectionIdx, 1);
+    updated.splice(targetIndex, 0, itemToMove);
+
+    setTemplate({ ...template, sectionOrder: updated });
+    setDraggedSectionIdx(null);
+  };
+
   const handleSelectSampleEmployee = (empId: string) => {
     const found = INITIAL_EMPLOYEES.find((e) => e.id === empId);
     if (found) setEmployee(found);
@@ -342,6 +376,33 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
               Mobile
             </button>
           </div>
+
+          {/* Zoom Selector */}
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+            <button
+              onClick={() => setZoomScale((prev) => Math.max(0.65, prev - 0.1))}
+              className="p-1 rounded text-slate-600 hover:bg-white"
+              title="Zoom Out"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <span className="font-mono text-[11px] px-1 font-bold text-slate-700">{Math.round(zoomScale * 100)}%</span>
+            <button
+              onClick={() => setZoomScale((prev) => Math.min(1.3, prev + 0.1))}
+              className="p-1 rounded text-slate-600 hover:bg-white"
+              title="Zoom In"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <button
+            onClick={() => setIsFullScreenPreview(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 font-bold text-xs shadow-xs transition-all active:scale-95"
+          >
+            <Maximize2 className="w-4 h-4 text-indigo-600" />
+            <span>Full Preview</span>
+          </button>
 
           <button
             onClick={handleResetData}
@@ -683,33 +744,43 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
           {/* TAB 3: Earnings & Deductions */}
           {controlTab === 'earnings' && (
             <div className="space-y-4 text-xs animate-fade-in">
-              <div className="p-3.5 rounded-xl bg-slate-900 text-white flex items-center justify-between shadow-md">
-                <div>
-                  <div className="text-[10px] text-indigo-300 font-semibold uppercase">Base Salary ({currencySymbol})</div>
-                  <input
-                    type="number"
-                    value={employee.basicSalary}
-                    onChange={(e) => setEmployee({ ...employee, basicSalary: parseFloat(e.target.value) || 0 })}
-                    className="bg-transparent font-bold font-mono text-lg outline-none text-white w-32"
-                  />
+              
+              {/* Base Salary Header Card */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50/90 via-slate-50 to-emerald-50/70 border border-indigo-100/90 shadow-xs flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <label className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider block mb-1">
+                    Base Salary
+                  </label>
+                  <div className="relative flex items-center">
+                    <span className="absolute left-3 font-mono font-bold text-slate-400 text-sm select-none">
+                      {currencySymbol}
+                    </span>
+                    <input
+                      type="number"
+                      value={employee.basicSalary || ''}
+                      onChange={(e) => setEmployee({ ...employee, basicSalary: parseFloat(e.target.value) || 0 })}
+                      className="w-full text-base font-extrabold font-mono pl-7 pr-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-900 shadow-2xs focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all"
+                      placeholder="0.00"
+                    />
+                  </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-[10px] text-slate-400">Calculated Net Pay</div>
-                  <div className="font-extrabold font-mono text-emerald-400 text-lg">{formatCurrency(calculated.netSalary, currencySymbol)}</div>
+                <div className="text-right shrink-0">
+                  <div className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">Calculated Net Pay</div>
+                  <div className="text-xl font-extrabold font-mono text-emerald-600 mt-1">{formatCurrency(calculated.netSalary, currencySymbol)}</div>
                 </div>
               </div>
 
               {/* Earnings */}
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-emerald-600 uppercase text-[11px]">Earnings / Allowances</span>
-                  <button onClick={handleAddEarning} className="text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-1 text-[11px]">
-                    <Plus className="w-3 h-3" /> Add Earning
+                  <span className="font-bold text-emerald-600 uppercase text-[11px] tracking-wider">Earnings / Allowances</span>
+                  <button onClick={handleAddEarning} className="text-emerald-600 hover:text-emerald-700 font-bold flex items-center gap-1 text-[11px] transition-colors">
+                    <Plus className="w-3.5 h-3.5" /> Add Earning
                   </button>
                 </div>
 
                 {earnings.map((e, idx) => (
-                  <div key={e.id} className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200">
+                  <div key={e.id} className="flex items-center gap-2 p-2 rounded-xl bg-slate-50/70 border border-slate-200/80 hover:bg-slate-50 transition-all">
                     <input
                       type="text"
                       value={e.name}
@@ -718,36 +789,41 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                         updated[idx].name = evt.target.value;
                         setEarnings(updated);
                       }}
-                      className="flex-1 p-1 rounded border border-slate-300 bg-white font-semibold text-xs"
+                      className="flex-1 p-2 rounded-lg border border-slate-300 bg-white font-semibold text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
-                    <input
-                      type="number"
-                      value={e.amount}
-                      onChange={(evt) => {
-                        const updated = [...earnings];
-                        updated[idx].amount = parseFloat(evt.target.value) || 0;
-                        setEarnings(updated);
-                      }}
-                      className="w-20 p-1 rounded border border-slate-300 bg-white font-mono text-xs"
-                    />
-                    <button onClick={() => handleRemoveEarning(e.id)} className="p-1 text-slate-400 hover:text-rose-600">
-                      <Trash2 className="w-3.5 h-3.5" />
+                    <div className="relative flex items-center w-28">
+                      <span className="absolute left-2.5 text-[11px] font-mono font-bold text-slate-400 select-none">
+                        {currencySymbol}
+                      </span>
+                      <input
+                        type="number"
+                        value={e.amount || ''}
+                        onChange={(evt) => {
+                          const updated = [...earnings];
+                          updated[idx].amount = parseFloat(evt.target.value) || 0;
+                          setEarnings(updated);
+                        }}
+                        className="w-full p-2 pl-6 rounded-lg border border-slate-300 bg-white font-mono font-bold text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                    </div>
+                    <button onClick={() => handleRemoveEarning(e.id)} className="p-1.5 text-slate-400 hover:text-rose-600 transition-colors">
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 ))}
               </div>
 
               {/* Deductions */}
-              <div className="space-y-2 pt-2 border-t border-slate-100">
+              <div className="space-y-2.5 pt-3 border-t border-slate-100">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-rose-600 uppercase text-[11px]">Deductions & Taxes</span>
-                  <button onClick={handleAddDeduction} className="text-rose-600 hover:text-rose-700 font-semibold flex items-center gap-1 text-[11px]">
-                    <Plus className="w-3 h-3" /> Add Deduction
+                  <span className="font-bold text-rose-600 uppercase text-[11px] tracking-wider">Deductions & Taxes</span>
+                  <button onClick={handleAddDeduction} className="text-rose-600 hover:text-rose-700 font-bold flex items-center gap-1 text-[11px] transition-colors">
+                    <Plus className="w-3.5 h-3.5" /> Add Deduction
                   </button>
                 </div>
 
                 {deductions.map((d, idx) => (
-                  <div key={d.id} className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200">
+                  <div key={d.id} className="flex items-center gap-2 p-2 rounded-xl bg-slate-50/70 border border-slate-200/80 hover:bg-slate-50 transition-all">
                     <input
                       type="text"
                       value={d.name}
@@ -756,20 +832,25 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                         updated[idx].name = evt.target.value;
                         setDeductions(updated);
                       }}
-                      className="flex-1 p-1 rounded border border-slate-300 bg-white font-semibold text-xs"
+                      className="flex-1 p-2 rounded-lg border border-slate-300 bg-white font-semibold text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
-                    <input
-                      type="number"
-                      value={d.amount}
-                      onChange={(evt) => {
-                        const updated = [...deductions];
-                        updated[idx].amount = parseFloat(evt.target.value) || 0;
-                        setDeductions(updated);
-                      }}
-                      className="w-20 p-1 rounded border border-slate-300 bg-white font-mono text-xs text-rose-600 font-bold"
-                    />
-                    <button onClick={() => handleRemoveDeduction(d.id)} className="p-1 text-slate-400 hover:text-rose-600">
-                      <Trash2 className="w-3.5 h-3.5" />
+                    <div className="relative flex items-center w-28">
+                      <span className="absolute left-2.5 text-[11px] font-mono font-bold text-rose-400 select-none">
+                        -
+                      </span>
+                      <input
+                        type="number"
+                        value={d.amount || ''}
+                        onChange={(evt) => {
+                          const updated = [...deductions];
+                          updated[idx].amount = parseFloat(evt.target.value) || 0;
+                          setDeductions(updated);
+                        }}
+                        className="w-full p-2 pl-5 rounded-lg border border-slate-300 bg-white font-mono font-extrabold text-xs text-rose-600 focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                    </div>
+                    <button onClick={() => handleRemoveDeduction(d.id)} className="p-1.5 text-slate-400 hover:text-rose-600 transition-colors">
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 ))}
@@ -894,10 +975,16 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
                     onChange={(e) => setTemplate({ ...template, fontFamily: e.target.value as any })}
                     className="w-full p-2 rounded-lg border border-slate-300 mt-1 bg-white"
                   >
-                    <option value="Inter">Inter (Clean)</option>
-                    <option value="Outfit">Outfit (Modern)</option>
-                    <option value="Roboto">Roboto (Standard)</option>
-                    <option value="Courier Prime">Courier (Contractor)</option>
+                    <option value="Inter">Inter (Clean Modern Sans)</option>
+                    <option value="Outfit">Outfit (Tech Bold Sans)</option>
+                    <option value="Roboto">Roboto (Corporate Standard)</option>
+                    <option value="Montserrat">Montserrat (Sleek Geometric)</option>
+                    <option value="Poppins">Poppins (Friendly Modern)</option>
+                    <option value="Courier Prime">Courier Prime (Monospace)</option>
+                    <option value="Fira Code">Fira Code (Technical Mono)</option>
+                    <option value="Georgia">Georgia (Classic Serif)</option>
+                    <option value="Playfair Display">Playfair Display (Luxury Serif)</option>
+                    <option value="Cinzel">Cinzel (Executive Roman)</option>
                   </select>
                 </div>
               </div>
@@ -926,15 +1013,35 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
 
               {/* Section Order */}
               <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                <span className="font-bold text-slate-700 uppercase text-[10px]">Reorder Document Sections</span>
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700 uppercase text-[10px]">Reorder Document Sections</span>
+                  <span className="text-[10px] text-indigo-600 font-semibold flex items-center gap-1">
+                    <GripVertical className="w-3 h-3" /> Grab & Move
+                  </span>
+                </div>
+
                 {template.sectionOrder.map((secId, idx) => (
-                  <div key={secId} className="flex items-center justify-between p-2 rounded bg-slate-50 border text-[11px]">
-                    <span className="font-semibold text-slate-700 capitalize">{idx + 1}. {secId.replace('_', ' ')}</span>
+                  <div
+                    key={secId}
+                    draggable
+                    onDragStart={(e) => handleDragStartSection(e, idx)}
+                    onDragOver={handleDragOverSection}
+                    onDrop={(e) => handleDropSection(e, idx)}
+                    className={`flex items-center justify-between p-2 rounded-lg border text-[11px] cursor-grab active:cursor-grabbing transition-all ${
+                      draggedSectionIdx === idx 
+                        ? 'bg-indigo-50 border-indigo-400 opacity-60 scale-[0.98]' 
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <GripVertical className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="font-semibold text-slate-800 capitalize">{idx + 1}. {secId.replace('_', ' ')}</span>
+                    </div>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => handleMoveSection(idx, 'up')} disabled={idx === 0} className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-20">
+                      <button onClick={() => handleMoveSection(idx, 'up')} disabled={idx === 0} className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-20" title="Move Up">
                         <ArrowUp className="w-3 h-3" />
                       </button>
-                      <button onClick={() => handleMoveSection(idx, 'down')} disabled={idx === template.sectionOrder.length - 1} className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-20">
+                      <button onClick={() => handleMoveSection(idx, 'down')} disabled={idx === template.sectionOrder.length - 1} className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-20" title="Move Down">
                         <ArrowDown className="w-3 h-3" />
                       </button>
                     </div>
@@ -955,7 +1062,11 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
             className={`printable-document bg-white text-slate-900 p-8 sm:p-12 shadow-2xl shadow-slate-900/10 transition-all ${
               viewportMode === 'mobile' ? 'w-[380px]' : viewportMode === 'letter' ? 'w-[8.5in] min-h-[11in]' : 'w-[210mm] min-h-[297mm]'
             }`}
-            style={{ fontFamily: template.fontFamily === 'Courier Prime' ? 'monospace' : template.fontFamily }}
+            style={{ 
+              fontFamily: template.fontFamily === 'Courier Prime' ? 'monospace' : template.fontFamily,
+              transform: `scale(${zoomScale})`,
+              transformOrigin: 'top center',
+            }}
           >
             
             {template.sectionOrder.map((secId) => {
@@ -1139,6 +1250,218 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
         </div>
 
       </div>
+
+      {/* FULL SCREEN PREVIEW MODAL */}
+      {isFullScreenPreview && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-start p-4 sm:p-8 overflow-y-auto animate-fade-in">
+          
+          {/* Top Modal Controls */}
+          <div className="no-print w-full max-w-4xl flex items-center justify-between bg-white/10 p-4 rounded-2xl backdrop-blur-lg border border-white/10 text-white mb-6">
+            <div className="flex items-center gap-2">
+              <Eye className="w-5 h-5 text-indigo-400" />
+              <span className="font-bold text-sm tracking-tight">Full Document View</span>
+              <span className="text-xs text-slate-300 font-mono">({salaryMonth} {salaryYear})</span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handlePrint}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold backdrop-blur-md border border-white/10"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Print</span>
+              </button>
+
+              <button
+                onClick={handleDownloadPdf}
+                disabled={isGeneratingPdf}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg transition-all"
+              >
+                <Download className="w-4 h-4" />
+                <span>{isGeneratingPdf ? 'Exporting...' : 'Download PDF'}</span>
+              </button>
+
+              <button
+                onClick={() => setIsFullScreenPreview(false)}
+                className="p-2 rounded-xl bg-white/20 hover:bg-white/30 text-white transition-all text-xs font-bold flex items-center gap-1"
+              >
+                <Minimize2 className="w-4 h-4" />
+                <span>Close</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Full Screen Printable Canvas */}
+          <div
+            className="printable-document bg-white text-slate-900 p-8 sm:p-12 shadow-2xl rounded-xl w-[210mm] min-h-[297mm] mb-8"
+            style={{ fontFamily: template.fontFamily === 'Courier Prime' ? 'monospace' : template.fontFamily }}
+          >
+            {template.sectionOrder.map((secId) => {
+              switch (secId) {
+                case 'header':
+                  return (
+                    <div key={secId} className="flex items-start justify-between border-b-2 pb-5 mb-5" style={{ borderColor: template.primaryColor }}>
+                      <div className="space-y-1">
+                        {template.showCompanyLogo && company.logoUrl ? (
+                          <img src={company.logoUrl} alt="Logo" className="h-12 max-w-[180px] object-contain mb-1" />
+                        ) : (
+                          <div className="w-10 h-10 rounded-lg text-white font-bold flex items-center justify-center text-lg mb-1" style={{ backgroundColor: template.primaryColor }}>
+                            {company.name.charAt(0)}
+                          </div>
+                        )}
+                        <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">{company.name}</h1>
+                        <p className="text-[11px] text-slate-500 max-w-sm">{company.address}, {company.city}, {company.country}</p>
+                        <p className="text-[10px] text-slate-400 font-mono">Reg: {company.registrationNumber} • Tax ID: {company.taxPanVatNumber}</p>
+                      </div>
+
+                      <div className="text-right space-y-1">
+                        <span className="inline-block px-3 py-1 rounded text-xs font-bold uppercase tracking-wider border" style={{ backgroundColor: `${template.primaryColor}15`, color: template.primaryColor, borderColor: `${template.primaryColor}40` }}>
+                          CONFIDENTIAL PAYSLIP
+                        </span>
+                        <div className="text-base font-extrabold font-mono text-slate-900 mt-2">{payslipNumber}</div>
+                        <div className="text-[11px] font-semibold text-slate-600">{salaryMonth} {salaryYear}</div>
+                        <div className="text-[10px] text-slate-400">Pay Date: {paymentDate}</div>
+                      </div>
+                    </div>
+                  );
+
+                case 'employee_info':
+                  return (
+                    <div key={secId} className="grid grid-cols-2 gap-6 p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs mb-5">
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Employee Name:</span> <strong className="text-slate-900">{employee.fullName}</strong></div>
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Employee ID:</span> <span className="font-mono font-bold">{employee.id}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Designation:</span> <span>{employee.designation}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Department:</span> <span>{employee.department}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Joining Date:</span> <span>{employee.joiningDate}</span></div>
+                      </div>
+
+                      <div className="space-y-1.5 border-l border-slate-200 pl-6">
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Bank Name:</span> <span>{employee.bankName}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Account Number:</span> <span className="font-mono">•••• {employee.bankAccountNumber.slice(-4)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Tax / PAN ID:</span> <span className="font-mono">{employee.taxPanNumber}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Working Days:</span> <span>{attendance.workingDays} / Present: {attendance.presentDays}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500 font-semibold">Unpaid Absences:</span> <span>{attendance.unpaidLeave} days</span></div>
+                      </div>
+                    </div>
+                  );
+
+                case 'earnings_deductions_table':
+                  return (
+                    <div key={secId} className="border border-slate-300 rounded-lg overflow-hidden text-xs mb-5">
+                      <div className="grid grid-cols-2 text-white font-bold py-2.5 px-4 text-[11px] uppercase tracking-wider" style={{ backgroundColor: template.primaryColor }}>
+                        <span>Earnings Component</span>
+                        <span className="border-l border-white/20 pl-4">Deductions Component</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 divide-x divide-slate-200">
+                        <div className="p-4 space-y-2">
+                          <div className="flex justify-between font-bold text-slate-900 border-b border-slate-100 pb-1">
+                            <span>Basic Salary</span>
+                            <span className="font-mono">{formatCurrency(employee.basicSalary, currencySymbol)}</span>
+                          </div>
+                          {earnings.map((e) => (
+                            <div key={e.id} className="flex justify-between text-slate-700">
+                              <span>{e.name}</span>
+                              <span className="font-mono">{formatCurrency(e.amount, currencySymbol)}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="p-4 space-y-2">
+                          <div className="flex justify-between text-rose-700 font-semibold border-b border-slate-100 pb-1">
+                            <span>Income Tax Withheld</span>
+                            <span className="font-mono">{formatCurrency(calculated.taxAmount, currencySymbol)}</span>
+                          </div>
+                          {deductions.map((d) => (
+                            <div key={d.id} className="flex justify-between text-slate-700">
+                              <span>{d.name}</span>
+                              <span className="font-mono text-rose-600">-{formatCurrency(d.amount, currencySymbol)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 bg-slate-100 border-t border-slate-300 font-bold py-2.5 px-4">
+                        <div className="flex justify-between">
+                          <span>GROSS EARNINGS</span>
+                          <span className="font-mono text-emerald-700">{formatCurrency(calculated.grossSalary, currencySymbol)}</span>
+                        </div>
+                        <div className="flex justify-between border-l border-slate-300 pl-4">
+                          <span>TOTAL DEDUCTIONS</span>
+                          <span className="font-mono text-rose-700">-{formatCurrency(calculated.totalDeductions, currencySymbol)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+
+                case 'net_salary_callout':
+                  return (
+                    <div key={secId} className="p-5 rounded-xl text-white flex items-center justify-between shadow-md mb-5" style={{ backgroundColor: template.primaryColor }}>
+                      <div>
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-200">NET SALARY PAYABLE</div>
+                        <div className="text-[11px] text-slate-300">Direct Bank Transfer ({paymentDate})</div>
+                      </div>
+                      <div className="text-2xl font-extrabold font-mono text-white">
+                        {formatCurrency(calculated.netSalary, currencySymbol)}
+                      </div>
+                    </div>
+                  );
+
+                case 'ytd_summary':
+                  return template.showYtd ? (
+                    <div key={secId} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-3 gap-3 text-[11px] mb-5">
+                      <div>
+                        <div className="text-slate-400 font-semibold uppercase text-[10px]">YTD Gross Earnings</div>
+                        <div className="font-bold font-mono text-slate-900 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdGrossEarnings, currencySymbol)}</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-400 font-semibold uppercase text-[10px]">YTD Tax Withheld</div>
+                        <div className="font-bold font-mono text-slate-900 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdTaxPaid, currencySymbol)}</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-400 font-semibold uppercase text-[10px]">YTD Net Pay</div>
+                        <div className="font-extrabold font-mono text-emerald-700 mt-0.5">{formatCurrency(calculated.updatedYtd.ytdNetSalary, currencySymbol)}</div>
+                      </div>
+                    </div>
+                  ) : null;
+
+                case 'signatures_stamps':
+                  return template.showSignatures ? (
+                    <div key={secId} className="pt-4 border-t border-slate-200 flex items-center justify-between text-xs mb-4">
+                      <div className="flex items-center gap-3">
+                        {template.showQrCode && qrCodeDataUrl && (
+                          <img src={qrCodeDataUrl} alt="QR Code" className="w-16 h-16 border border-slate-200 rounded p-1" />
+                        )}
+                        <div>
+                          <div className="font-bold text-slate-800 flex items-center gap-1">
+                            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                            <span>Scan to Verify</span>
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500">Code: <strong>{verificationCode}</strong></div>
+                        </div>
+                      </div>
+
+                      <div className="text-right space-y-1">
+                        <div className="font-bold text-slate-900">{company.authorizedPersonName}</div>
+                        <div className="text-[11px] text-slate-500">{company.authorizedPersonDesignation}</div>
+                        <div className="text-[9px] text-slate-400">Digitally Verified & Sealed</div>
+                      </div>
+                    </div>
+                  ) : null;
+
+                default:
+                  return null;
+              }
+            })}
+
+            <div className="mt-4 pt-3 border-t border-slate-100 text-[10px] text-slate-400 text-center">
+              Computer-generated payslip statement issued by {company.name}.
+            </div>
+          </div>
+
+        </div>
+      )}
 
     </div>
   );
