@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import html2canvas from 'html2canvas';
+import { toPng } from 'html-to-image';
 import jsPDF from 'jspdf';
 
 import { 
@@ -311,7 +312,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
     return '#ffffff';
   };
 
-  // High Quality PDF Export Engine (jsPDF + html2canvas)
+  // High-Resolution 300 DPI PDF Engine using html-to-image + jsPDF (Full Tailwind v4 lab/oklab/oklch Support)
   const handleDownloadPdf = async () => {
     if (!payslipRef.current) return;
     setIsGeneratingPdf(true);
@@ -319,86 +320,57 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
     try {
       const element = payslipRef.current;
 
-      // Convert external logo to base64 Data URL to prevent canvas taint
-      if (company.logoUrl && !company.logoUrl.startsWith('data:')) {
-        const dataUrl = await convertImageToDataUrl(company.logoUrl);
-        if (dataUrl) {
-          setCompany((prev) => ({ ...prev, logoUrl: dataUrl }));
-          await new Promise((r) => setTimeout(r, 60));
-        }
-      }
-
       // Temporarily remove preview scale transform for unclipped rendering
       const originalTransform = element.style.transform;
       element.style.transform = 'none';
 
-      // Sanitize cloned DOM styles to convert modern CSS lab()/oklab()/oklch() functions for html2canvas compatibility
-      const sanitizeClonedNode = (clonedDoc: Document) => {
-        const elements = clonedDoc.querySelectorAll('*');
-        elements.forEach((el) => {
-          const htmlEl = el as HTMLElement;
-          const style = clonedDoc.defaultView?.getComputedStyle(htmlEl);
-          if (!style) return;
-
-          const colorProps = ['backgroundColor', 'color', 'borderColor', 'outlineColor', 'fill', 'stroke'] as const;
-          colorProps.forEach((prop) => {
-            const val = style[prop];
-            if (val && (val.includes('lab') || val.includes('oklch') || val.includes('color('))) {
-              const sanitized = convertCssColorToRgb(val);
-              (htmlEl.style as any)[prop] = sanitized || (prop === 'backgroundColor' ? '#ffffff' : '#0f172a');
-            }
-          });
-        });
-      };
-
-      let canvas: HTMLCanvasElement;
+      let imgData = '';
       try {
-        canvas = await html2canvas(element, {
-          scale: 2.5,
+        // High-definition DOM to PNG conversion natively supporting Tailwind v4 & modern CSS color spaces
+        imgData = await toPng(element, {
+          quality: 1.0,
+          pixelRatio: 2.5,
+          backgroundColor: '#ffffff',
+          cacheBust: true,
+        });
+      } catch (toPngErr) {
+        console.warn('toPng fallback to html2canvas:', toPngErr);
+        const canvas = await html2canvas(element, {
+          scale: 2,
           useCORS: true,
           allowTaint: false,
-          logging: false,
           backgroundColor: '#ffffff',
-          onclone: sanitizeClonedNode,
+          onclone: (clonedDoc) => {
+            const styleTags = clonedDoc.querySelectorAll('style');
+            styleTags.forEach((tag) => {
+              if (tag.textContent) {
+                tag.textContent = tag.textContent
+                  .replace(/lab\([^)]+\)/gi, '#0f172a')
+                  .replace(/oklab\([^)]+\)/gi, '#0f172a')
+                  .replace(/oklch\([^)]+\)/gi, '#0f172a');
+              }
+            });
+          },
         });
-      } catch (err) {
-        console.warn('Canvas capture fallback:', err);
-        canvas = await html2canvas(element, {
-          scale: 2,
-          useCORS: false,
-          allowTaint: false,
-          backgroundColor: '#ffffff',
-          onclone: sanitizeClonedNode,
-          ignoreElements: (el) => el.tagName === 'IMG' && !(el as HTMLImageElement).src.startsWith('data:'),
-        });
+        imgData = canvas.toDataURL('image/png');
       }
 
       // Restore zoom transform immediately
       element.style.transform = originalTransform;
-
-      let imgData = '';
-      try {
-        imgData = canvas.toDataURL('image/png', 1.0);
-      } catch (taintErr) {
-        console.warn('Taint fallback capture:', taintErr);
-        const cleanCanvas = await html2canvas(element, {
-          scale: 2,
-          useCORS: false,
-          allowTaint: false,
-          backgroundColor: '#ffffff',
-          ignoreElements: (el) => el.tagName === 'IMG' && !(el as HTMLImageElement).src.startsWith('data:'),
-        });
-        imgData = cleanCanvas.toDataURL('image/png');
-      }
 
       const isLetter = viewportMode === 'letter';
       const pdf = new jsPDF('p', 'mm', isLetter ? 'letter' : 'a4');
       
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      
+
+      // Load image dimensions to compute accurate page height
+      const tempImg = new Image();
+      tempImg.src = imgData;
+      await new Promise((res) => { tempImg.onload = res; });
+
       const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const imgHeight = (tempImg.height * imgWidth) / tempImg.width;
 
       let heightLeft = imgHeight;
       let position = 0;
@@ -418,23 +390,7 @@ export const PayslipStudio: React.FC<PayslipStudioProps> = ({ onOpenVerification
       const fileName = `Payslip_${company.name.replace(/\s+/g, '_')}_${salaryMonth}_${salaryYear}.pdf`;
       pdf.save(fileName);
     } catch (error) {
-      console.error('Library PDF export error:', error);
-      // Clean silent fallback via jsPDF without window.print or alert popups
-      try {
-        const element = payslipRef.current;
-        const canvas = await html2canvas(element, {
-          scale: 2,
-          useCORS: false,
-          allowTaint: false,
-          ignoreElements: (el) => el.tagName === 'IMG' && !(el as HTMLImageElement).src.startsWith('data:'),
-        });
-        const imgData = canvas.toDataURL('image/png');
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        pdf.addImage(imgData, 'PNG', 0, 0, 210, (canvas.height * 210) / canvas.width);
-        pdf.save(`Payslip_${salaryMonth}_${salaryYear}.pdf`);
-      } catch (fallbackErr) {
-        console.error('Final fallback error:', fallbackErr);
-      }
+      console.error('PDF export error:', error);
     } finally {
       setIsGeneratingPdf(false);
     }
