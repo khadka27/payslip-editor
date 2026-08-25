@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Navbar } from '../components/Navbar';
 import { PayslipStudio } from '../components/PayslipStudio';
 import { EmployeeManager } from '../components/EmployeeManager';
+import { PdfImporter } from '../components/PdfImporter';
 import { VerificationView } from '../components/VerificationView';
 import { getPayslipsStorage, saveEmployeesStorage, getEmployeesStorage } from '../lib/storage';
 import { Payslip, Employee } from '../types/payslip';
@@ -135,6 +136,8 @@ export default function Home() {
               setIsVerificationModalOpen(true);
             }}
           />
+        ) : activeTab === 'importer' ? (
+          <PdfImporter />
         ) : (
           <EmployeeManager
             employees={employees}

@@ -10,12 +10,13 @@ import {
   CheckCircle2,
   Lock,
   Zap,
-  ArrowRight
+  ArrowRight,
+  FileUp
 } from 'lucide-react';
 
 interface NavbarProps {
-  activeTab?: 'studio' | 'employees';
-  onTabChange?: (tab: 'studio' | 'employees') => void;
+  activeTab?: 'studio' | 'importer' | 'employees';
+  onTabChange?: (tab: 'studio' | 'importer' | 'employees') => void;
   onOpenVerification: () => void;
 }
 
@@ -49,26 +50,38 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-100/90 border border-slate-200/80 text-xs font-bold">
             <button
               onClick={() => onTabChange?.('studio')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition-all ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all ${
                 activeTab === 'studio'
                   ? 'bg-white text-indigo-600 shadow-xs font-extrabold'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
               }`}
             >
               <Sliders className="w-3.5 h-3.5" />
-              <span>Studio Editor</span>
+              <span>Studio</span>
+            </button>
+
+            <button
+              onClick={() => onTabChange?.('importer')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all ${
+                activeTab === 'importer'
+                  ? 'bg-white text-indigo-600 shadow-xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+              }`}
+            >
+              <FileUp className="w-3.5 h-3.5" />
+              <span>Import PDF</span>
             </button>
 
             <button
               onClick={() => onTabChange?.('employees')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition-all ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all ${
                 activeTab === 'employees'
                   ? 'bg-white text-indigo-600 shadow-xs font-extrabold'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>Employee Directory</span>
+              <span>Directory</span>
             </button>
           </div>
 
