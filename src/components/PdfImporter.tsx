@@ -39,7 +39,8 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
-  Palette
+  Palette,
+  MousePointerClick
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { 
@@ -52,7 +53,7 @@ import {
 } from '../lib/pdfEditorUtils';
 import { CustomSelect } from './ui/CustomSelect';
 
-type ToolMode = 'select' | 'edit_text' | 'add_text' | 'whiteout' | 'stamp';
+type ToolMode = 'direct_edit' | 'add_text' | 'whiteout' | 'stamp';
 type SidebarTab = 'smart_replace' | 'layers' | 'stamps';
 
 export const PdfImporter: React.FC = () => {
@@ -68,7 +69,7 @@ export const PdfImporter: React.FC = () => {
   
   // Canvas & Zoom State
   const [zoomScale, setZoomScale] = useState<number>(1.0);
-  const [activeTool, setActiveTool] = useState<ToolMode>('select');
+  const [activeTool, setActiveTool] = useState<ToolMode>('direct_edit');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('smart_replace');
   
   // Overlays (Per Page)
@@ -105,6 +106,7 @@ export const PdfImporter: React.FC = () => {
   const workbenchRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const stampImageInputRef = useRef<HTMLInputElement>(null);
+  const activeInputRef = useRef<HTMLInputElement>(null);
 
   // Current page data & overlay elements
   const currentPageData = pageDataMap[currentPage] || null;
@@ -300,6 +302,13 @@ export const PdfImporter: React.FC = () => {
     };
   }, [pdfDoc, currentPage, currentPageData, displayWidth]);
 
+  // Focus active input when an element is selected
+  useEffect(() => {
+    if (selectedElementId && activeInputRef.current) {
+      activeInputRef.current.focus();
+    }
+  }, [selectedElementId]);
+
   // Click on PDF Canvas Handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (isDraggingElement || isResizingElement) return;
@@ -309,32 +318,7 @@ export const PdfImporter: React.FC = () => {
     const xPct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
     const yPct = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
 
-    if (activeTool === 'add_text') {
-      const newEl: PdfOverlayElement = {
-        id: `txt_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-        pageIndex: currentPage,
-        type: 'text',
-        x: Math.max(0, Math.min(80, xPct)),
-        y: Math.max(0, Math.min(95, yPct)),
-        width: 25,
-        height: 4,
-        text: 'New Text',
-        fontSize: 14,
-        fontFamily: 'Inter',
-        color: '#0f172a',
-        bold: false,
-        italic: false,
-        align: 'left',
-        hasWhiteoutBg: false,
-      };
-
-      updateElementsByPage(prev => ({
-        ...prev,
-        [currentPage]: [...(prev[currentPage] || []), newEl],
-      }));
-      setSelectedElementId(newEl.id);
-      setActiveTool('select');
-    } else if (activeTool === 'whiteout') {
+    if (activeTool === 'whiteout') {
       const newEl: PdfOverlayElement = {
         id: `wo_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
         pageIndex: currentPage,
@@ -351,22 +335,103 @@ export const PdfImporter: React.FC = () => {
         [currentPage]: [...(prev[currentPage] || []), newEl],
       }));
       setSelectedElementId(newEl.id);
-      setActiveTool('select');
-    } else if (activeTool === 'select') {
-      if (e.target === containerRef.current || (e.target as HTMLElement).tagName === 'CANVAS') {
+      setActiveTool('direct_edit');
+      return;
+    }
+
+    // In Direct Edit or Add Text mode: clicking blank space adds/selects new text box
+    if (e.target === containerRef.current || (e.target as HTMLElement).tagName === 'CANVAS') {
+      if (activeTool === 'add_text' || activeTool === 'direct_edit') {
+        const newEl: PdfOverlayElement = {
+          id: `txt_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+          pageIndex: currentPage,
+          type: 'text',
+          x: Math.max(0, Math.min(80, xPct)),
+          y: Math.max(0, Math.min(95, yPct)),
+          width: 22,
+          height: 3.8,
+          text: 'Type text...',
+          fontSize: 14,
+          fontFamily: 'Inter',
+          color: '#0f172a',
+          bold: false,
+          italic: false,
+          align: 'left',
+          hasWhiteoutBg: false,
+        };
+
+        updateElementsByPage(prev => ({
+          ...prev,
+          [currentPage]: [...(prev[currentPage] || []), newEl],
+        }));
+        setSelectedElementId(newEl.id);
+      } else {
         setSelectedElementId(null);
       }
     }
   };
 
-  // Convert Detected Text Item to Editable Replacement Overlay
+  // Sample background color and contrast text color from underlying rendered PDF canvas
+  const sampleBackgroundColorAt = (xPct: number, yPct: number, widthPct: number, heightPct: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { bgColor: '#ffffff', textColor: '#0f172a' };
+
+    try {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return { bgColor: '#ffffff', textColor: '#0f172a' };
+
+      const pixelX = Math.round((xPct / 100) * canvas.width);
+      const pixelY = Math.round((yPct / 100) * canvas.height);
+      const pixelW = Math.round((widthPct / 100) * canvas.width);
+      const pixelH = Math.round((heightPct / 100) * canvas.height);
+
+      // Sample edge/corner points to capture the true background rather than the glyph stroke
+      const samplePoints = [
+        { x: Math.max(1, pixelX + 1), y: Math.max(1, pixelY + 1) },
+        { x: Math.min(canvas.width - 2, pixelX + pixelW - 1), y: Math.max(1, pixelY + 1) },
+        { x: Math.max(1, pixelX + 1), y: Math.min(canvas.height - 2, pixelY + pixelH - 1) },
+      ];
+
+      let rTotal = 0, gTotal = 0, bTotal = 0;
+      for (const pt of samplePoints) {
+        const data = ctx.getImageData(pt.x, pt.y, 1, 1).data;
+        rTotal += data[0];
+        gTotal += data[1];
+        bTotal += data[2];
+      }
+      const r = Math.round(rTotal / samplePoints.length);
+      const g = Math.round(gTotal / samplePoints.length);
+      const b = Math.round(bTotal / samplePoints.length);
+
+      const hex = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+      const luminance = (r * 299 + g * 587 + b * 114) / 1000;
+      // Dark background (e.g. blue banner, dark header) -> White text; Light background -> Dark text
+      const textColor = luminance < 140 ? '#ffffff' : '#0f172a';
+
+      return { bgColor: hex, textColor };
+    } catch (err) {
+      return { bgColor: '#ffffff', textColor: '#0f172a' };
+    }
+  };
+
+  // Convert Detected Text Item to DIRECT Editable Replacement Overlay
   const handleEditDetectedText = (textItem: PdfTextItem) => {
     const existing = currentElements.find(el => el.originalTextId === textItem.id);
     if (existing) {
       setSelectedElementId(existing.id);
-      setActiveTool('select');
       return;
     }
+
+    const { bgColor, textColor } = sampleBackgroundColorAt(textItem.x, textItem.y, textItem.width, textItem.height);
+
+    // Calculate proportional font size
+    const pageNativeHeight = currentPageData?.height || 842;
+    const calculatedFontSize = Math.max(
+      10,
+      Math.round((textItem.height / 100) * pageNativeHeight * 0.72)
+    );
+
+    const isHeading = calculatedFontSize >= 18 || /Report|Summary|Total|Invoice|Payslip|Title|Cost|Gross|Net|Statement/i.test(textItem.str);
 
     const newEl: PdfOverlayElement = {
       id: `rep_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
@@ -374,16 +439,17 @@ export const PdfImporter: React.FC = () => {
       type: 'text',
       x: textItem.x,
       y: textItem.y,
-      width: Math.max(textItem.width + 1.5, 6),
-      height: Math.max(textItem.height, 2.5),
+      width: Math.max(textItem.width + 1.2, 5),
+      height: Math.max(textItem.height, 2.4),
       text: textItem.str,
-      fontSize: Math.max(10, Math.round(textItem.fontSize)),
+      fontSize: calculatedFontSize,
       fontFamily: 'Inter',
-      color: '#0f172a',
-      bold: false,
+      color: textColor, // Auto-matches contrast (white on dark blue, dark on light)
+      bold: isHeading,
       italic: false,
       align: 'left',
-      hasWhiteoutBg: true, // Automatically masks the original text on the PDF
+      hasWhiteoutBg: true, // Seamlessly masks original text with exact background color
+      fillColor: bgColor, // Exact sampled background color of the canvas at that position
       originalTextId: textItem.id,
     };
 
@@ -392,7 +458,6 @@ export const PdfImporter: React.FC = () => {
       [currentPage]: [...(prev[currentPage] || []), newEl],
     }));
     setSelectedElementId(newEl.id);
-    setActiveTool('select');
   };
 
   // Drag & Move Elements Handler
@@ -518,7 +583,6 @@ export const PdfImporter: React.FC = () => {
       [currentPage]: [...(prev[currentPage] || []), newEl],
     }));
     setSelectedElementId(newEl.id);
-    setActiveTool('select');
   };
 
   // Image Upload Stamp Insertion
@@ -547,7 +611,6 @@ export const PdfImporter: React.FC = () => {
         [currentPage]: [...(prev[currentPage] || []), newEl],
       }));
       setSelectedElementId(newEl.id);
-      setActiveTool('select');
     };
     reader.readAsDataURL(file);
   };
@@ -621,7 +684,6 @@ export const PdfImporter: React.FC = () => {
     }));
     setSelectedElementId(newEl.id);
     setIsSignatureModalOpen(false);
-    setActiveTool('select');
   };
 
   // High-DPI PDF Export matching exact native page sizes
@@ -651,7 +713,6 @@ export const PdfImporter: React.FC = () => {
           pdfExport.addPage([mmWidth, mmHeight], orientation);
         }
 
-        // Render at 3.0x native resolution for crystal clear 300+ DPI output
         const exportScale = 3.0;
         const viewport = page.getViewport({ scale: exportScale });
 
@@ -759,13 +820,13 @@ export const PdfImporter: React.FC = () => {
             <div className="relative z-10 max-w-3xl space-y-3">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-bold shadow-2xs">
                 <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-                <span>Direct PDF Document Editor & Annotator</span>
+                <span>Direct PDF In-Place Document Editor</span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
-                Edit Your <span className="bg-gradient-to-r from-indigo-400 to-violet-300 bg-clip-text text-transparent">Exact Uploaded PDF</span>
+                Directly Edit Any <span className="bg-gradient-to-r from-indigo-400 to-violet-300 bg-clip-text text-transparent">Uploaded PDF</span>
               </h1>
               <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-medium">
-                Upload any PDF document (payslips, contracts, certificates, presentations) to edit text directly on top of the original layout, replace amounts and dates, erase unwanted sections with whiteouts, add signatures and official stamps, and re-export with 100% original visual fidelity.
+                Upload your payslip, certificate, contract, or document. Simply click directly on any text or number inside the PDF to edit and replace it inline, with 100% original visual layout preserved.
               </p>
             </div>
           </div>
@@ -777,16 +838,16 @@ export const PdfImporter: React.FC = () => {
             </div>
 
             <div className="space-y-2 max-w-md mx-auto">
-              <h3 className="text-xl font-extrabold text-slate-900">Upload PDF to Edit</h3>
+              <h3 className="text-xl font-extrabold text-slate-900">Upload PDF for Direct In-Place Editing</h3>
               <p className="text-xs sm:text-sm text-slate-500">
-                Drag & drop your PDF file here, or click below. Supports Portrait, Landscape, Letter, A4, and Presentation slides.
+                Click any word, amount, date, or name directly inside the document to edit it in real-time.
               </p>
             </div>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
               <label className="px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-indigo-600/20 transition-all cursor-pointer flex items-center gap-2 active:scale-95">
                 <FileUp className="w-4 h-4" />
-                <span>{isProcessing ? 'Parsing Document...' : 'Browse & Upload PDF'}</span>
+                <span>{isProcessing ? 'Loading Document...' : 'Browse & Upload PDF'}</span>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -811,16 +872,16 @@ export const PdfImporter: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl mx-auto pt-6 text-left">
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
                 <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-                  <Edit3 className="w-3.5 h-3.5 text-indigo-600" /> Click-to-Edit Text
+                  <MousePointerClick className="w-3.5 h-3.5 text-indigo-600" /> 1-Click Direct In-Place Edit
                 </div>
-                <div className="text-[11px] text-slate-500 mt-1">Click any text on the original PDF to replace or update it inline.</div>
+                <div className="text-[11px] text-slate-500 mt-1">Hover and click any text inside the PDF to edit it immediately.</div>
               </div>
 
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
                 <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-                  <Square className="w-3.5 h-3.5 text-emerald-600" /> Whiteout & Redaction
+                  <Square className="w-3.5 h-3.5 text-emerald-600" /> Auto Masking & Whiteout
                 </div>
-                <div className="text-[11px] text-slate-500 mt-1">Seamlessly mask and erase unwanted logos, amounts, or text blocks.</div>
+                <div className="text-[11px] text-slate-500 mt-1">Automatically masks the original text behind your new edits.</div>
               </div>
 
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
@@ -849,13 +910,9 @@ export const PdfImporter: React.FC = () => {
                 <div className="text-xs font-extrabold text-slate-900 flex items-center gap-2 max-w-[200px] sm:max-w-xs truncate">
                   <span className="truncate">{fileName || 'Uploaded PDF'}</span>
                 </div>
-                <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1.5">
-                  <span>{numPages} {numPages === 1 ? 'Page' : 'Pages'}</span>
-                  {currentPageData && (
-                    <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[10px] font-mono">
-                      {currentPageData.isLandscape ? 'Landscape' : 'Portrait'} ({Math.round(currentPageData.width)}×{Math.round(currentPageData.height)} pt)
-                    </span>
-                  )}
+                <div className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1.5">
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>Direct Edit Active (Click any text on PDF)</span>
                 </div>
               </div>
             </div>
@@ -863,29 +920,16 @@ export const PdfImporter: React.FC = () => {
             {/* Mode Switcher Tools */}
             <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200 text-xs font-bold">
               <button
-                onClick={() => setActiveTool('select')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
-                  activeTool === 'select'
-                    ? 'bg-white text-indigo-600 shadow-xs font-extrabold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Select and Move Elements"
-              >
-                <Move className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Select</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTool('edit_text')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
-                  activeTool === 'edit_text'
+                onClick={() => setActiveTool('direct_edit')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg transition-all ${
+                  activeTool === 'direct_edit'
                     ? 'bg-indigo-600 text-white shadow-xs font-extrabold'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
-                title="Click any text in the PDF to edit it"
+                title="Click any text in the PDF to edit it directly"
               >
                 <Edit3 className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Edit Text</span>
+                <span>Direct Edit</span>
               </button>
 
               <button
@@ -992,13 +1036,13 @@ export const PdfImporter: React.FC = () => {
 
           </div>
 
-          {/* Contextual Properties Bar (Visible when an element is selected) */}
+          {/* Contextual Properties Bar (Always ready when any element is active) */}
           {selectedElement && (
-            <div className="bg-indigo-50/90 p-2.5 sm:p-3 rounded-2xl border border-indigo-200 flex flex-wrap items-center justify-between gap-3 text-xs animate-fade-in shadow-xs">
+            <div className="bg-indigo-50/95 p-2.5 sm:p-3 rounded-2xl border border-indigo-200 flex flex-wrap items-center justify-between gap-3 text-xs animate-fade-in shadow-xs">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-bold text-indigo-900 flex items-center gap-1.5">
                   <Sliders className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>Edit {selectedElement.type.toUpperCase()}:</span>
+                  <span>Formatting:</span>
                 </span>
 
                 {selectedElement.type === 'text' && (
@@ -1047,30 +1091,46 @@ export const PdfImporter: React.FC = () => {
                       </button>
                     </div>
 
-                    {/* Color Picker */}
+                    {/* Text Color Picker */}
                     <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-xl border border-slate-300">
+                      <span className="text-[10px] text-slate-500 font-bold">Text:</span>
                       <input
                         type="color"
                         value={selectedElement.color || '#0f172a'}
                         onChange={(e) => updateSelectedElement({ color: e.target.value })}
-                        className="w-5 h-5 rounded cursor-pointer border-0 p-0"
+                        className="w-4 h-4 rounded cursor-pointer border-0 p-0"
                       />
                       <span className="font-mono text-[10px] text-slate-600">{selectedElement.color || '#0f172a'}</span>
                     </div>
 
-                    {/* Mask Original Background Toggle */}
-                    <button
-                      onClick={() => updateSelectedElement({ hasWhiteoutBg: !selectedElement.hasWhiteoutBg })}
-                      className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border font-bold text-[11px] transition-all ${
-                        selectedElement.hasWhiteoutBg
-                          ? 'bg-emerald-600 text-white border-emerald-600'
-                          : 'bg-white text-slate-700 border-slate-300'
-                      }`}
-                      title="Covers original PDF text behind this block"
-                    >
-                      <Square className="w-3 h-3" />
-                      <span>Whiteout Mask</span>
-                    </button>
+                    {/* Mask Original Background & Color Picker */}
+                    <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-300">
+                      <button
+                        onClick={() => updateSelectedElement({ hasWhiteoutBg: !selectedElement.hasWhiteoutBg })}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded-lg font-bold text-[10px] transition-all ${
+                          selectedElement.hasWhiteoutBg
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                        title="Covers original PDF text behind this block"
+                      >
+                        <Square className="w-3 h-3" />
+                        <span>Mask</span>
+                      </button>
+
+                      {selectedElement.hasWhiteoutBg && (
+                        <div className="flex items-center gap-1 pl-1 border-l border-slate-200">
+                          <input
+                            type="color"
+                            value={selectedElement.fillColor || '#ffffff'}
+                            onChange={(e) => updateSelectedElement({ fillColor: e.target.value })}
+                            className="w-4 h-4 rounded cursor-pointer border-0 p-0"
+                            title="Mask background color"
+                          />
+                          <span className="font-mono text-[10px] text-slate-600">{selectedElement.fillColor || '#ffffff'}</span>
+                        </div>
+                      )}
+                    </div>
                   </>
                 )}
 
@@ -1410,7 +1470,7 @@ export const PdfImporter: React.FC = () => {
               <div
                 ref={containerRef}
                 onClick={handleCanvasClick}
-                className="relative bg-white shadow-2xl rounded-xs overflow-hidden select-none border border-slate-300 transition-all cursor-crosshair shrink-0"
+                className="relative bg-white shadow-2xl rounded-xs overflow-hidden select-none border border-slate-300 transition-all cursor-text shrink-0"
                 style={{
                   width: `${displayWidth}px`,
                   height: `${displayHeight}px`,
@@ -1420,8 +1480,8 @@ export const PdfImporter: React.FC = () => {
                 {/* 1. Underlying High-Res Rendered PDF Canvas */}
                 <canvas ref={canvasRef} className="block w-full h-full pointer-events-none" />
 
-                {/* 2. Detected PDF Text Hover Highlights (in Edit Text Mode) */}
-                {activeTool === 'edit_text' && (currentPageData?.textItems || []).map((item) => {
+                {/* 2. Direct In-Place Interactive PDF Text Layer (ALWAYS ACTIVE) */}
+                {(currentPageData?.textItems || []).map((item) => {
                   const isHovered = hoveredTextItem?.id === item.id;
                   const isExisting = currentElements.some(el => el.originalTextId === item.id);
                   if (isExisting) return null;
@@ -1435,10 +1495,10 @@ export const PdfImporter: React.FC = () => {
                       }}
                       onMouseEnter={() => setHoveredTextItem(item)}
                       onMouseLeave={() => setHoveredTextItem(null)}
-                      className={`absolute border rounded-xs transition-all cursor-pointer ${
+                      className={`absolute rounded-xs transition-all cursor-pointer ${
                         isHovered
-                          ? 'bg-indigo-500/30 border-indigo-600 ring-2 ring-indigo-500/50 z-20'
-                          : 'border-indigo-400/40 hover:border-indigo-600 bg-indigo-50/15'
+                          ? 'bg-indigo-500/25 ring-2 ring-indigo-500 border border-indigo-600 z-20 shadow-xs'
+                          : 'hover:bg-indigo-50/20 hover:border hover:border-indigo-400/50'
                       }`}
                       style={{
                         left: `${item.x}%`,
@@ -1446,12 +1506,18 @@ export const PdfImporter: React.FC = () => {
                         width: `${item.width}%`,
                         height: `${item.height}%`,
                       }}
-                      title={`Click to edit "${item.str}"`}
-                    />
+                      title={`Click directly to edit "${item.str}"`}
+                    >
+                      {isHovered && (
+                        <span className="absolute -top-5 left-0 bg-indigo-600 text-white text-[9px] font-bold px-1.5 py-0.2 rounded shadow-xs pointer-events-none whitespace-nowrap z-30">
+                          Click to edit
+                        </span>
+                      )}
+                    </div>
                   );
                 })}
 
-                {/* 3. Interactive Placed Overlays (Modifications, Whiteouts, Replacement Text, Stamps) */}
+                {/* 3. Interactive Active Overlay Edits, Whiteouts, Replacement Text, Stamps */}
                 {currentElements.map((el) => {
                   const isSelected = selectedElementId === el.id;
 
@@ -1461,11 +1527,10 @@ export const PdfImporter: React.FC = () => {
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelectedElementId(el.id);
-                        setActiveTool('select');
                       }}
                       className={`absolute group transition-shadow ${
                         isSelected
-                          ? 'ring-2 ring-indigo-600 shadow-lg z-30 cursor-move'
+                          ? 'ring-2 ring-indigo-600 shadow-md z-30'
                           : 'hover:ring-1 hover:ring-indigo-400 z-10'
                       }`}
                       style={{
@@ -1473,18 +1538,19 @@ export const PdfImporter: React.FC = () => {
                         top: `${el.y}%`,
                         width: `${el.width}%`,
                         height: `${el.height}%`,
-                        backgroundColor: el.type === 'whiteout' ? (el.fillColor || '#ffffff') : (el.hasWhiteoutBg ? '#ffffff' : 'transparent'),
+                        backgroundColor: el.type === 'whiteout' ? (el.fillColor || '#ffffff') : (el.hasWhiteoutBg ? (el.fillColor || '#ffffff') : 'transparent'),
                       }}
                     >
-                      {/* Text Element Render */}
+                      {/* Direct Inline Text Input */}
                       {el.type === 'text' && (
                         <div
-                          className="w-full h-full flex items-center px-1"
+                          className="w-full h-full flex items-center px-0.5"
                           style={{
                             justifyContent: el.align === 'center' ? 'center' : (el.align === 'right' ? 'flex-end' : 'flex-start'),
                           }}
                         >
                           <input
+                            ref={isSelected ? activeInputRef : undefined}
                             type="text"
                             value={el.text || ''}
                             onChange={(e) => {
@@ -1495,7 +1561,12 @@ export const PdfImporter: React.FC = () => {
                                 return { ...prev, [currentPage]: updated };
                               });
                             }}
-                            className="w-full h-full bg-transparent border-0 outline-none p-0"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === 'Escape') {
+                                (e.target as HTMLInputElement).blur();
+                              }
+                            }}
+                            className="w-full h-full bg-transparent border-0 outline-none p-0 focus:ring-0"
                             style={{
                               fontSize: `${Math.max(8, ((el.fontSize || 14) * (displayWidth / (nativeWidth || 600))))}px`,
                               fontFamily: el.fontFamily || 'Inter',
