@@ -24,7 +24,7 @@ import {
 
 export default function Home() {
   const [isLoaded, setIsLoaded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'studio' | 'employees'>('studio');
+  const [activeTab, setActiveTab] = useState<'studio' | 'importer' | 'employees'>('studio');
   const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
   const [payslips, setPayslips] = useState<Payslip[]>([]);

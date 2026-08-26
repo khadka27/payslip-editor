@@ -1,735 +1,1573 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   FileUp, 
   Sparkles, 
   CheckCircle2, 
   Edit3, 
-  Sliders, 
+  Type, 
+  Square, 
+  Stamp, 
+  PenTool, 
   Download, 
-  Building2, 
-  User, 
-  DollarSign, 
-  Calendar, 
-  RefreshCw,
-  FileText,
-  AlertCircle,
-  ArrowRight
+  Undo2, 
+  Redo2, 
+  ZoomIn, 
+  ZoomOut, 
+  Maximize2, 
+  Trash2, 
+  Copy, 
+  Eye, 
+  EyeOff, 
+  Layers, 
+  Search, 
+  ChevronLeft, 
+  ChevronRight, 
+  Sliders, 
+  Check, 
+  Plus, 
+  X, 
+  FileText, 
+  RefreshCw, 
+  ShieldCheck, 
+  Printer, 
+  Image as ImageIcon,
+  Move,
+  Bold,
+  Italic,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Palette
 } from 'lucide-react';
-import { Company, Employee, EarningComponent, DeductionComponent, PayslipTemplate } from '../types/payslip';
-import { calculateSalary, formatCurrency } from '../lib/calculator';
-import { DEFAULT_TEMPLATES } from '../lib/templates';
-import { CustomSelect } from './ui/CustomSelect';
-import { CustomDatePicker } from './ui/CustomDatePicker';
-import { toPng } from 'html-to-image';
 import jsPDF from 'jspdf';
+import { 
+  PdfTextItem, 
+  PdfOverlayElement, 
+  PdfPageData, 
+  processPdfTextItems, 
+  matchesCategory,
+  generateSampleCorporatePdfBuffer 
+} from '../lib/pdfEditorUtils';
+import { CustomSelect } from './ui/CustomSelect';
 
-interface PdfImporterProps {
-  onImportToStudio?: (data: { company: Company; employee: Employee; earnings: EarningComponent[]; deductions: DeductionComponent[] }) => void;
-}
+type ToolMode = 'select' | 'edit_text' | 'add_text' | 'whiteout' | 'stamp';
+type SidebarTab = 'smart_replace' | 'layers' | 'stamps';
 
-export const PdfImporter: React.FC<PdfImporterProps> = ({ onImportToStudio }) => {
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [importedFileName, setImportedFileName] = useState<string | null>(null);
-  const [extractedData, setExtractedData] = useState<{
-    company: Company;
-    employee: Employee;
-    earnings: EarningComponent[];
-    deductions: DeductionComponent[];
-    salaryMonth: string;
-    salaryYear: number;
-    paymentDate: string;
-  } | null>(null);
+export const PdfImporter: React.FC = () => {
+  // Document State
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfBuffer, setPdfBuffer] = useState<ArrayBuffer | null>(null);
+  const [fileName, setFileName] = useState<string>('');
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const [numPages, setNumPages] = useState<number>(0);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageDataMap, setPageDataMap] = useState<Record<number, PdfPageData>>({});
+  
+  // Canvas & Zoom State
+  const [zoomScale, setZoomScale] = useState<number>(1.0);
+  const [activeTool, setActiveTool] = useState<ToolMode>('select');
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('smart_replace');
+  
+  // Overlays (Per Page)
+  const [elementsByPage, setElementsByPage] = useState<Record<number, PdfOverlayElement[]>>({});
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const [hoveredTextItem, setHoveredTextItem] = useState<PdfTextItem | null>(null);
+  
+  // Dragging / Resizing State for Overlays
+  const [isDraggingElement, setIsDraggingElement] = useState<boolean>(false);
+  const [dragStartPos, setDragStartPos] = useState<{ mouseX: number; mouseY: number; elX: number; elY: number } | null>(null);
+  const [isResizingElement, setIsResizingElement] = useState<boolean>(false);
+  const [resizeStartPos, setResizeStartPos] = useState<{ mouseX: number; mouseY: number; startW: number; startH: number } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'extracted' | 'preview'>('extracted');
-  const [accentColor, setAccentColor] = useState('#2563eb');
-  const [fontFamily, setFontFamily] = useState<'Inter' | 'Outfit' | 'Roboto' | 'Montserrat' | 'Poppins' | 'Courier Prime'>('Inter');
-  const [isExporting, setIsExporting] = useState(false);
-  const previewRef = useRef<HTMLDivElement>(null);
+  // History State for Undo / Redo
+  const [history, setHistory] = useState<Array<Record<number, PdfOverlayElement[]>>>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  
+  // Export state
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  
+  // Smart Search & Filter
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [filterCategory, setFilterCategory] = useState<'all' | 'amount' | 'date' | 'id' | 'name'>('all');
 
-  // Sample Demo PDF loader for instant testing
-  const handleLoadSamplePdfData = () => {
-    setIsProcessing(true);
-    setTimeout(() => {
-      setImportedFileName('Sample_Corporate_Payslip.pdf');
-      setExtractedData({
-        company: {
-          name: 'Acme Global Technologies Inc.',
-          address: '100 Innovation Way, Tech Park',
-          city: 'San Francisco, CA 94107',
-          country: 'United States',
-          registrationNumber: 'REG-2024-998877',
-          taxPanVatNumber: 'TAX-US-9948201',
-          website: 'www.acmeglobal.com',
-          email: 'payroll@acmeglobal.com',
-          logoUrl: 'https://unavatar.io/stripe.com',
-        },
-        employee: {
-          id: 'EMP-101',
-          fullName: 'Alexander Wright',
-          photoUrl: '',
-          dob: '1992-06-15',
-          gender: 'Male',
-          nationality: 'American',
-          address: '456 Market St, San Francisco, CA',
-          phone: '+1 (555) 234-5678',
-          email: 'alex.wright@acmeglobal.com',
-          department: 'Software Engineering',
-          designation: 'Senior Staff Engineer',
-          employmentType: 'full_time',
-          joiningDate: '2021-03-15',
-          workLocation: 'San Francisco HQ',
-          bankName: 'JPMorgan Chase Bank',
-          bankAccountNumber: '•••• 1045',
-          branch: 'Market St Branch',
-          taxPanNumber: 'PAN-AW-99201',
-          socialSecurityNumber: 'SSN-982-11',
-          basicSalary: 8500,
-        },
-        earnings: [
-          { id: 'e1', name: 'House Rent Allowance (HRA)', amount: 2500, calculationType: 'fixed', isTaxable: true, isFixed: true },
-          { id: 'e2', name: 'Transport Allowance', amount: 800, calculationType: 'fixed', isTaxable: true, isFixed: true },
-          { id: 'e3', name: 'Performance Bonus', amount: 1200, calculationType: 'fixed', isTaxable: true, isFixed: true },
-        ],
-        deductions: [
-          { id: 'd1', name: 'Federal Income Tax', amount: 1850, calculationMethod: 'fixed' },
-          { id: 'd2', name: 'Employee Provident Fund (EPF)', amount: 1020, calculationMethod: 'fixed' },
-          { id: 'd3', name: 'Health Insurance', amount: 350, calculationMethod: 'fixed' },
-        ],
-        salaryMonth: 'August',
-        salaryYear: 2026,
-        paymentDate: '2026-08-31',
-      });
-      setIsProcessing(false);
-    }, 600);
+  // Signature Pad State
+  const [isSignatureModalOpen, setIsSignatureModalOpen] = useState<boolean>(false);
+  const signatureCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState<boolean>(false);
+
+  // References
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const renderTaskRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const workbenchRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const stampImageInputRef = useRef<HTMLInputElement>(null);
+
+  // Current page data & overlay elements
+  const currentPageData = pageDataMap[currentPage] || null;
+  const currentElements = elementsByPage[currentPage] || [];
+  const selectedElement = currentElements.find(el => el.id === selectedElementId) || null;
+
+  // Push new state to history
+  const pushHistory = useCallback((newElementsMap: Record<number, PdfOverlayElement[]>) => {
+    setHistory(prev => {
+      const next = prev.slice(0, historyIndex + 1);
+      return [...next, JSON.parse(JSON.stringify(newElementsMap))];
+    });
+    setHistoryIndex(prev => prev + 1);
+  }, [historyIndex]);
+
+  const updateElementsByPage = useCallback((updater: (prev: Record<number, PdfOverlayElement[]>) => Record<number, PdfOverlayElement[]>) => {
+    setElementsByPage(prev => {
+      const updated = updater(prev);
+      pushHistory(updated);
+      return updated;
+    });
+  }, [pushHistory]);
+
+  const handleUndo = () => {
+    if (historyIndex > 0) {
+      const prevIndex = historyIndex - 1;
+      setHistoryIndex(prevIndex);
+      setElementsByPage(JSON.parse(JSON.stringify(history[prevIndex])));
+      setSelectedElementId(null);
+    }
   };
 
-  // Upload PDF File Handler & Field Extractor
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleRedo = () => {
+    if (historyIndex < history.length - 1) {
+      const nextIndex = historyIndex + 1;
+      setHistoryIndex(nextIndex);
+      setElementsByPage(JSON.parse(JSON.stringify(history[nextIndex])));
+    }
+  };
 
+  // Load PDF from ArrayBuffer
+  const loadPdfFromBuffer = async (buffer: ArrayBuffer, name: string) => {
     setIsProcessing(true);
-    const fileName = file.name;
-    setImportedFileName(fileName);
-
-    const cleanBaseName = fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-    const nameParts = cleanBaseName.split(' ');
-    const inferredCompany = nameParts[0] ? `${nameParts[0].charAt(0).toUpperCase() + nameParts[0].slice(1)} Corp` : 'Uploaded Enterprise';
-    const inferredEmpName = nameParts.length > 1 ? nameParts.slice(1).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ') : 'Employee Profile';
+    setFileName(name);
+    setPdfBuffer(buffer);
+    setElementsByPage({});
+    setHistory([{}]);
+    setHistoryIndex(0);
+    setSelectedElementId(null);
 
     try {
-      // Import pdfjs-dist dynamically for browser environment
       const pdfjsLib = await import('pdfjs-dist');
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version || '3.11.174'}/build/pdf.worker.min.js`;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.js`;
 
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ 
-        data: arrayBuffer,
+      const loadingTask = pdfjsLib.getDocument({
+        data: buffer,
         useSystemFonts: true,
-        disableFontFace: true 
-      }).promise;
-      
-      let fullText = '';
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const tokenContent = await page.getTextContent();
-        const pageText = tokenContent.items.map((item: any) => item.str).join(' ');
-        fullText += pageText + '\n';
+        disableFontFace: false,
+      });
+      const doc = await loadingTask.promise;
+      setPdfDoc(doc);
+      setNumPages(doc.numPages);
+      setCurrentPage(1);
+
+      // Extract native page dimensions and text content for each page
+      const newPageDataMap: Record<number, PdfPageData> = {};
+      for (let p = 1; p <= doc.numPages; p++) {
+        const page = await doc.getPage(p);
+        const unscaledViewport = page.getViewport({ scale: 1.0 });
+        const textContent = await page.getTextContent();
+        const textItems = processPdfTextItems(textContent.items, unscaledViewport, p);
+
+        const width = unscaledViewport.width;
+        const height = unscaledViewport.height;
+        const aspectRatio = width / height;
+
+        newPageDataMap[p] = {
+          pageIndex: p,
+          width,
+          height,
+          aspectRatio,
+          isLandscape: width > height,
+          textItems,
+        };
       }
-
-      // Smart Pattern Extractor
-      const extractPattern = (regex: RegExp, fallback: string) => {
-        const match = fullText.match(regex);
-        return match && match[1] ? match[1].trim() : fallback;
-      };
-
-      const extractNumber = (regex: RegExp, fallback: number) => {
-        const match = fullText.match(regex);
-        if (match && match[1]) {
-          const num = parseFloat(match[1].replace(/,/g, ''));
-          return isNaN(num) ? fallback : num;
-        }
-        return fallback;
-      };
-
-      const companyName = extractPattern(/(?:Company|Employer|Organization|Inc\.|Ltd\.):?\s*([A-Za-z0-9\s&.,]+)/i, inferredCompany);
-      const empName = extractPattern(/(?:Employee Name|Staff Name|Name):?\s*([A-Za-z\s]+)/i, inferredEmpName);
-      const empId = extractPattern(/(?:Employee ID|Emp ID|ID):?\s*([A-Z0-9-]+)/i, `EMP-${Math.floor(100 + Math.random() * 900)}`);
-      const designation = extractPattern(/(?:Designation|Role|Title):?\s*([A-Za-z\s]+)/i, 'Specialist');
-      const department = extractPattern(/(?:Department|Dept):?\s*([A-Za-z\s]+)/i, 'Operations');
-      const basicSalary = extractNumber(/(?:Basic Salary|Basic Pay|Base Salary):?\s*\$?([0-9,.]+)/i, 6000);
-
-      setExtractedData({
-        company: {
-          name: companyName,
-          address: extractPattern(/(?:Address|Street):?\s*([A-Za-z0-9\s.,]+)/i, 'Corporate Hub'),
-          city: 'San Francisco, CA',
-          country: 'United States',
-          registrationNumber: extractPattern(/Reg:?\s*([A-Z0-9-]+)/i, 'REG-2026-UPLOAD'),
-          taxPanVatNumber: extractPattern(/Tax ID:?\s*([A-Z0-9-]+)/i, 'TAX-998877'),
-          website: `www.${companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`,
-          email: `payroll@${companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`,
-          logoUrl: '',
-        },
-        employee: {
-          id: empId,
-          fullName: empName,
-          photoUrl: '',
-          dob: '1994-05-12',
-          gender: 'Male',
-          nationality: 'Standard',
-          address: 'Main Street Address',
-          phone: '+1 (555) 000-1122',
-          email: `${empName.toLowerCase().replace(/\s+/g, '.')}@company.com`,
-          department: department,
-          designation: designation,
-          employmentType: 'full_time',
-          joiningDate: '2022-01-10',
-          workLocation: 'Headquarters',
-          bankName: extractPattern(/Bank:?\s*([A-Za-z\s]+)/i, 'Commercial Bank'),
-          bankAccountNumber: extractPattern(/Account:?\s*([0-9xX•]+)/i, '•••• 8899'),
-          branch: 'Central',
-          taxPanNumber: 'PAN-REG-99',
-          socialSecurityNumber: 'SSN-000-11',
-          basicSalary: basicSalary,
-        },
-        earnings: [
-          { id: 'e1', name: 'House Rent Allowance (HRA)', amount: Math.round(basicSalary * 0.3), calculationType: 'fixed', isTaxable: true, isFixed: true },
-          { id: 'e2', name: 'Special Allowance', amount: Math.round(basicSalary * 0.15), calculationType: 'fixed', isTaxable: true, isFixed: true },
-        ],
-        deductions: [
-          { id: 'd1', name: 'Income Tax Withheld', amount: Math.round(basicSalary * 0.18), calculationMethod: 'fixed' },
-          { id: 'd2', name: 'Provident Fund (EPF)', amount: Math.round(basicSalary * 0.08), calculationMethod: 'fixed' },
-        ],
-        salaryMonth: 'August',
-        salaryYear: 2026,
-        paymentDate: '2026-08-31',
-      });
+      setPageDataMap(newPageDataMap);
     } catch (err) {
-      console.warn('PDF text parsing fallback:', err);
-      // Fallback: Initialize extracted data cleanly derived from uploaded file name without loading sample corporate data
-      setExtractedData({
-        company: {
-          name: inferredCompany,
-          address: 'Commercial Business Center',
-          city: 'San Francisco, CA',
-          country: 'United States',
-          registrationNumber: 'REG-2026-FILE',
-          taxPanVatNumber: 'TAX-778899',
-          website: 'www.uploaded-payslip.com',
-          email: 'payroll@uploaded-payslip.com',
-          logoUrl: '',
-        },
-        employee: {
-          id: `EMP-${Math.floor(100 + Math.random() * 900)}`,
-          fullName: inferredEmpName,
-          photoUrl: '',
-          dob: '1995-01-01',
-          gender: 'Male',
-          nationality: 'Standard',
-          address: 'Primary Address',
-          phone: '+1 (555) 000-8899',
-          email: `${inferredEmpName.toLowerCase().replace(/\s+/g, '.')}@uploaded-payslip.com`,
-          department: 'General Staff',
-          designation: 'Professional Specialist',
-          employmentType: 'full_time',
-          joiningDate: new Date().toISOString().split('T')[0],
-          workLocation: 'Main Office',
-          bankName: 'National Bank',
-          bankAccountNumber: '•••• 9988',
-          branch: 'Main Branch',
-          taxPanNumber: 'PAN-LOCAL-01',
-          socialSecurityNumber: 'SSN-000-99',
-          basicSalary: 6500,
-        },
-        earnings: [
-          { id: 'e1', name: 'House Rent Allowance (HRA)', amount: 1950, calculationType: 'fixed', isTaxable: true, isFixed: true },
-          { id: 'e2', name: 'Special Allowance', amount: 975, calculationType: 'fixed', isTaxable: true, isFixed: true },
-        ],
-        deductions: [
-          { id: 'd1', name: 'Income Tax Withheld', amount: 1170, calculationMethod: 'fixed' },
-          { id: 'd2', name: 'Provident Fund (EPF)', amount: 520, calculationMethod: 'fixed' },
-        ],
-        salaryMonth: 'August',
-        salaryYear: 2026,
-        paymentDate: new Date().toISOString().split('T')[0],
-      });
+      console.error('Error parsing PDF buffer:', err);
+      alert('Could not parse PDF file. Please ensure it is a valid PDF document.');
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Export newly customized PDF
-  const handleExportEditedPdf = async () => {
-    if (!previewRef.current) return;
+  // File Upload Handlers
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPdfFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      if (ev.target?.result instanceof ArrayBuffer) {
+        loadPdfFromBuffer(ev.target.result, file.name);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleLoadSamplePdf = () => {
+    const buffer = generateSampleCorporatePdfBuffer();
+    loadPdfFromBuffer(buffer, 'Acme_Corporate_Payslip_Sample.pdf');
+  };
+
+  // Calculate dynamic display dimensions matching the exact PDF page aspect ratio
+  const calculateDisplayDimensions = () => {
+    if (!currentPageData) {
+      return { displayWidth: 650, displayHeight: 920, nativeWidth: 650, nativeHeight: 920 };
+    }
+
+    const { width, height, aspectRatio, isLandscape } = currentPageData;
+    const baseWidth = isLandscape ? 820 : 640;
+    const displayWidth = Math.round(baseWidth * zoomScale);
+    const displayHeight = Math.round(displayWidth / aspectRatio);
+
+    return { displayWidth, displayHeight, nativeWidth: width, nativeHeight: height };
+  };
+
+  const { displayWidth, displayHeight, nativeWidth, nativeHeight } = calculateDisplayDimensions();
+
+  // Render current PDF page to canvas with high resolution and race-condition safety
+  useEffect(() => {
+    if (!pdfDoc || !canvasRef.current || !currentPageData) return;
+
+    let isCancelled = false;
+
+    const renderPage = async () => {
+      // Cancel previous render task if active
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch (_) {}
+        renderTaskRef.current = null;
+      }
+
+      try {
+        const page = await pdfDoc.getPage(currentPage);
+        if (isCancelled) return;
+
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        // High resolution scale factor (device pixel ratio + high quality supersampling)
+        const dpr = typeof window !== 'undefined' ? Math.max(2, window.devicePixelRatio || 2) : 2;
+        const renderScale = (displayWidth / currentPageData.width) * dpr;
+        const renderViewport = page.getViewport({ scale: renderScale });
+
+        canvas.width = renderViewport.width;
+        canvas.height = renderViewport.height;
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+
+        const renderContext = {
+          canvasContext: ctx,
+          viewport: renderViewport,
+        };
+
+        const renderTask = page.render(renderContext);
+        renderTaskRef.current = renderTask;
+        await renderTask.promise;
+      } catch (err: any) {
+        if (!isCancelled && err?.name !== 'RenderingCancelledException') {
+          console.error('Error rendering page:', err);
+        }
+      } finally {
+        if (renderTaskRef.current && !isCancelled) {
+          renderTaskRef.current = null;
+        }
+      }
+    };
+
+    renderPage();
+
+    return () => {
+      isCancelled = true;
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch (_) {}
+        renderTaskRef.current = null;
+      }
+    };
+  }, [pdfDoc, currentPage, currentPageData, displayWidth]);
+
+  // Click on PDF Canvas Handler
+  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isDraggingElement || isResizingElement) return;
+    if (!containerRef.current) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const xPct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+    const yPct = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+
+    if (activeTool === 'add_text') {
+      const newEl: PdfOverlayElement = {
+        id: `txt_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+        pageIndex: currentPage,
+        type: 'text',
+        x: Math.max(0, Math.min(80, xPct)),
+        y: Math.max(0, Math.min(95, yPct)),
+        width: 25,
+        height: 4,
+        text: 'New Text',
+        fontSize: 14,
+        fontFamily: 'Inter',
+        color: '#0f172a',
+        bold: false,
+        italic: false,
+        align: 'left',
+        hasWhiteoutBg: false,
+      };
+
+      updateElementsByPage(prev => ({
+        ...prev,
+        [currentPage]: [...(prev[currentPage] || []), newEl],
+      }));
+      setSelectedElementId(newEl.id);
+      setActiveTool('select');
+    } else if (activeTool === 'whiteout') {
+      const newEl: PdfOverlayElement = {
+        id: `wo_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+        pageIndex: currentPage,
+        type: 'whiteout',
+        x: Math.max(0, Math.min(80, xPct)),
+        y: Math.max(0, Math.min(95, yPct)),
+        width: 20,
+        height: 3.5,
+        fillColor: '#ffffff',
+      };
+
+      updateElementsByPage(prev => ({
+        ...prev,
+        [currentPage]: [...(prev[currentPage] || []), newEl],
+      }));
+      setSelectedElementId(newEl.id);
+      setActiveTool('select');
+    } else if (activeTool === 'select') {
+      if (e.target === containerRef.current || (e.target as HTMLElement).tagName === 'CANVAS') {
+        setSelectedElementId(null);
+      }
+    }
+  };
+
+  // Convert Detected Text Item to Editable Replacement Overlay
+  const handleEditDetectedText = (textItem: PdfTextItem) => {
+    const existing = currentElements.find(el => el.originalTextId === textItem.id);
+    if (existing) {
+      setSelectedElementId(existing.id);
+      setActiveTool('select');
+      return;
+    }
+
+    const newEl: PdfOverlayElement = {
+      id: `rep_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      pageIndex: currentPage,
+      type: 'text',
+      x: textItem.x,
+      y: textItem.y,
+      width: Math.max(textItem.width + 1.5, 6),
+      height: Math.max(textItem.height, 2.5),
+      text: textItem.str,
+      fontSize: Math.max(10, Math.round(textItem.fontSize)),
+      fontFamily: 'Inter',
+      color: '#0f172a',
+      bold: false,
+      italic: false,
+      align: 'left',
+      hasWhiteoutBg: true, // Automatically masks the original text on the PDF
+      originalTextId: textItem.id,
+    };
+
+    updateElementsByPage(prev => ({
+      ...prev,
+      [currentPage]: [...(prev[currentPage] || []), newEl],
+    }));
+    setSelectedElementId(newEl.id);
+    setActiveTool('select');
+  };
+
+  // Drag & Move Elements Handler
+  const startDragElement = (e: React.MouseEvent, el: PdfOverlayElement) => {
+    e.stopPropagation();
+    setSelectedElementId(el.id);
+    setIsDraggingElement(true);
+    setDragStartPos({
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      elX: el.x,
+      elY: el.y,
+    });
+  };
+
+  // Resize Element Handler
+  const startResizeElement = (e: React.MouseEvent, el: PdfOverlayElement) => {
+    e.stopPropagation();
+    setSelectedElementId(el.id);
+    setIsResizingElement(true);
+    setResizeStartPos({
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      startW: el.width,
+      startH: el.height,
+    });
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDraggingElement && dragStartPos && selectedElementId && containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const deltaXPct = ((e.clientX - dragStartPos.mouseX) / rect.width) * 100;
+        const deltaYPct = ((e.clientY - dragStartPos.mouseY) / rect.height) * 100;
+
+        const newX = Math.max(0, Math.min(98, dragStartPos.elX + deltaXPct));
+        const newY = Math.max(0, Math.min(98, dragStartPos.elY + deltaYPct));
+
+        setElementsByPage(prev => {
+          const pageEls = prev[currentPage] || [];
+          return {
+            ...prev,
+            [currentPage]: pageEls.map(el => el.id === selectedElementId ? { ...el, x: newX, y: newY } : el),
+          };
+        });
+      } else if (isResizingElement && resizeStartPos && selectedElementId && containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const deltaWPct = ((e.clientX - resizeStartPos.mouseX) / rect.width) * 100;
+        const deltaHPct = ((e.clientY - resizeStartPos.mouseY) / rect.height) * 100;
+
+        const newW = Math.max(3, Math.min(100, resizeStartPos.startW + deltaWPct));
+        const newH = Math.max(1.5, Math.min(100, resizeStartPos.startH + deltaHPct));
+
+        setElementsByPage(prev => {
+          const pageEls = prev[currentPage] || [];
+          return {
+            ...prev,
+            [currentPage]: pageEls.map(el => el.id === selectedElementId ? { ...el, width: newW, height: newH } : el),
+          };
+        });
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (isDraggingElement || isResizingElement) {
+        setIsDraggingElement(false);
+        setIsResizingElement(false);
+        setDragStartPos(null);
+        setResizeStartPos(null);
+        pushHistory(elementsByPage);
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingElement, isResizingElement, dragStartPos, resizeStartPos, selectedElementId, currentPage, elementsByPage, pushHistory]);
+
+  // Update selected element property
+  const updateSelectedElement = (props: Partial<PdfOverlayElement>) => {
+    if (!selectedElementId) return;
+    updateElementsByPage(prev => {
+      const pageEls = prev[currentPage] || [];
+      const updated = pageEls.map(el => el.id === selectedElementId ? { ...el, ...props } : el);
+      return { ...prev, [currentPage]: updated };
+    });
+  };
+
+  // Delete element
+  const handleDeleteElement = (id: string) => {
+    updateElementsByPage(prev => {
+      const pageEls = prev[currentPage] || [];
+      return {
+        ...prev,
+        [currentPage]: pageEls.filter(el => el.id !== id),
+      };
+    });
+    if (selectedElementId === id) {
+      setSelectedElementId(null);
+    }
+  };
+
+  // Preset Stamp Insertion
+  const handleAddPresetStamp = (label: string, color: string) => {
+    const newEl: PdfOverlayElement = {
+      id: `stamp_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      pageIndex: currentPage,
+      type: 'stamp',
+      x: 70,
+      y: 80,
+      width: 22,
+      height: 7,
+      text: label,
+      stampColor: color,
+      opacity: 0.9,
+    };
+
+    updateElementsByPage(prev => ({
+      ...prev,
+      [currentPage]: [...(prev[currentPage] || []), newEl],
+    }));
+    setSelectedElementId(newEl.id);
+    setActiveTool('select');
+  };
+
+  // Image Upload Stamp Insertion
+  const handleStampImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      if (!dataUrl) return;
+
+      const newEl: PdfOverlayElement = {
+        id: `img_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+        pageIndex: currentPage,
+        type: 'image',
+        x: 65,
+        y: 75,
+        width: 25,
+        height: 12,
+        dataUrl,
+        opacity: 1,
+      };
+
+      updateElementsByPage(prev => ({
+        ...prev,
+        [currentPage]: [...(prev[currentPage] || []), newEl],
+      }));
+      setSelectedElementId(newEl.id);
+      setActiveTool('select');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Signature Pad Handlers
+  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    setIsDrawing(true);
+    const rect = canvas.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    
+    ctx.beginPath();
+    ctx.moveTo(clientX - rect.left, clientY - rect.top);
+  };
+
+  const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isDrawing) return;
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#1e3a8a';
+    ctx.lineTo(clientX - rect.left, clientY - rect.top);
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => {
+    setIsDrawing(false);
+  };
+
+  const clearSignature = () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const saveSignature = () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    const dataUrl = canvas.toDataURL('image/png');
+
+    const newEl: PdfOverlayElement = {
+      id: `sig_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      pageIndex: currentPage,
+      type: 'image',
+      x: 65,
+      y: 78,
+      width: 25,
+      height: 10,
+      dataUrl,
+      opacity: 1,
+    };
+
+    updateElementsByPage(prev => ({
+      ...prev,
+      [currentPage]: [...(prev[currentPage] || []), newEl],
+    }));
+    setSelectedElementId(newEl.id);
+    setIsSignatureModalOpen(false);
+    setActiveTool('select');
+  };
+
+  // High-DPI PDF Export matching exact native page sizes
+  const handleExportPdf = async () => {
+    if (!pdfDoc) return;
     setIsExporting(true);
 
     try {
-      const dataUrl = await toPng(previewRef.current, {
-        quality: 1.0,
-        pixelRatio: 2.5,
-        backgroundColor: '#ffffff',
-        skipFonts: true,
-      });
+      let pdfExport: jsPDF | null = null;
 
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const img = new Image();
-      img.src = dataUrl;
-      await new Promise((res) => { img.onload = res; });
+      for (let p = 1; p <= numPages; p++) {
+        const page = await pdfDoc.getPage(p);
+        const unscaledViewport = page.getViewport({ scale: 1.0 });
+        const ptWidth = unscaledViewport.width;
+        const ptHeight = unscaledViewport.height;
+        const mmWidth = ptWidth * 0.352778;
+        const mmHeight = ptHeight * 0.352778;
+        const orientation = ptWidth > ptHeight ? 'landscape' : 'portrait';
 
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (img.height * pdfWidth) / img.width;
+        if (p === 1) {
+          pdfExport = new jsPDF({
+            orientation,
+            unit: 'mm',
+            format: [mmWidth, mmHeight],
+          });
+        } else if (pdfExport) {
+          pdfExport.addPage([mmWidth, mmHeight], orientation);
+        }
 
-      pdf.addImage(dataUrl, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`Customized_Payslip_${extractedData?.employee.fullName.replace(/\s+/g, '_') || 'Edited'}.pdf`);
+        // Render at 3.0x native resolution for crystal clear 300+ DPI output
+        const exportScale = 3.0;
+        const viewport = page.getViewport({ scale: exportScale });
+
+        const offscreenCanvas = document.createElement('canvas');
+        offscreenCanvas.width = viewport.width;
+        offscreenCanvas.height = viewport.height;
+        const ctx = offscreenCanvas.getContext('2d');
+        if (!ctx || !pdfExport) continue;
+
+        // 1. Draw base PDF page
+        await page.render({ canvasContext: ctx, viewport }).promise;
+
+        // 2. Draw overlay elements on top of the base PDF
+        const pageEls = elementsByPage[p] || [];
+        for (const el of pageEls) {
+          const elX = (el.x / 100) * offscreenCanvas.width;
+          const elY = (el.y / 100) * offscreenCanvas.height;
+          const elW = (el.width / 100) * offscreenCanvas.width;
+          const elH = (el.height / 100) * offscreenCanvas.height;
+
+          ctx.save();
+
+          if (el.type === 'whiteout' || (el.type === 'text' && el.hasWhiteoutBg)) {
+            ctx.fillStyle = el.fillColor || '#ffffff';
+            ctx.fillRect(elX, elY, elW, elH);
+          }
+
+          if (el.type === 'text' && el.text) {
+            const fontPx = ((el.fontSize || 14) / 72) * (exportScale * 72);
+            ctx.font = `${el.bold ? 'bold ' : ''}${el.italic ? 'italic ' : ''}${fontPx}px ${el.fontFamily || 'Inter'}, sans-serif`;
+            ctx.fillStyle = el.color || '#0f172a';
+            ctx.textBaseline = 'middle';
+            
+            let textX = elX;
+            if (el.align === 'center') textX = elX + (elW / 2);
+            else if (el.align === 'right') textX = elX + elW;
+            ctx.textAlign = el.align || 'left';
+
+            ctx.fillText(el.text, textX, elY + (elH / 2));
+          } else if (el.type === 'stamp' && el.text) {
+            ctx.globalAlpha = el.opacity ?? 0.9;
+            ctx.strokeStyle = el.stampColor || '#10b981';
+            ctx.lineWidth = 4 * exportScale;
+            ctx.strokeRect(elX, elY, elW, elH);
+
+            const fontPx = ((el.height * 0.45) / 100) * offscreenCanvas.height;
+            ctx.font = `bold ${fontPx}px sans-serif`;
+            ctx.fillStyle = el.stampColor || '#10b981';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(el.text, elX + (elW / 2), elY + (elH / 2));
+          } else if (el.type === 'image' && el.dataUrl) {
+            ctx.globalAlpha = el.opacity ?? 1;
+            const img = new Image();
+            img.src = el.dataUrl;
+            await new Promise((res) => { img.onload = res; });
+            ctx.drawImage(img, elX, elY, elW, elH);
+          }
+
+          ctx.restore();
+        }
+
+        const pageImgData = offscreenCanvas.toDataURL('image/jpeg', 0.98);
+        pdfExport.addImage(pageImgData, 'JPEG', 0, 0, mmWidth, mmHeight);
+      }
+
+      if (pdfExport) {
+        const saveName = fileName ? `Edited_${fileName.replace(/\.pdf$/i, '')}.pdf` : 'Edited_Document.pdf';
+        pdfExport.save(saveName);
+      }
     } catch (err) {
-      console.error('PDF export error:', err);
+      console.error('PDF Export Error:', err);
+      alert('Export failed. Please try again.');
     } finally {
       setIsExporting(false);
     }
   };
 
-  const calculated = extractedData ? calculateSalary({
-    basicSalary: extractedData.employee.basicSalary,
-    earnings: extractedData.earnings,
-    deductions: extractedData.deductions,
-    attendance: { workingDays: 22, presentDays: 22, paidLeave: 0, unpaidLeave: 0, overtimeHours: 0, autoDeductUnpaidAbsence: true },
-    taxConfig: { taxCalculationMode: 'manual', manualTaxAmount: 0 },
-  }) : null;
+  // Text Items for Current Page with Search & Filter
+  const allPageItems = currentPageData?.textItems || [];
+
+  const categoryCounts = {
+    all: allPageItems.length,
+    amount: allPageItems.filter(item => matchesCategory(item.str, 'amount')).length,
+    date: allPageItems.filter(item => matchesCategory(item.str, 'date')).length,
+    id: allPageItems.filter(item => matchesCategory(item.str, 'id')).length,
+    name: allPageItems.filter(item => matchesCategory(item.str, 'name')).length,
+  };
+
+  const currentPageTextItems = allPageItems.filter(item => {
+    if (filterCategory !== 'all' && !matchesCategory(item.str, filterCategory)) return false;
+    if (searchQuery.trim() && !item.str.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    return true;
+  });
 
   return (
     <div className="space-y-6 animate-fade-in">
       
-      {/* Hero Header */}
-      <div className="bg-gradient-to-r from-slate-50 via-indigo-50/70 to-purple-50/50 p-6 sm:p-8 rounded-3xl text-slate-900 shadow-xs border border-indigo-100/90 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
-        
-        <div className="relative z-10 max-w-3xl space-y-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white text-indigo-700 border border-indigo-200/80 text-xs font-bold shadow-2xs">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600 animate-pulse" />
-            <span>Smart PDF Field Parser & Live Customized Renderer</span>
+      {/* Upload Dropzone View (When No PDF is Loaded) */}
+      {!pdfDoc ? (
+        <div className="space-y-6">
+          {/* Header Banner */}
+          <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-8 rounded-3xl text-white shadow-xl border border-slate-800 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="relative z-10 max-w-3xl space-y-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-bold shadow-2xs">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+                <span>Direct PDF Document Editor & Annotator</span>
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+                Edit Your <span className="bg-gradient-to-r from-indigo-400 to-violet-300 bg-clip-text text-transparent">Exact Uploaded PDF</span>
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-medium">
+                Upload any PDF document (payslips, contracts, certificates, presentations) to edit text directly on top of the original layout, replace amounts and dates, erase unwanted sections with whiteouts, add signatures and official stamps, and re-export with 100% original visual fidelity.
+              </p>
+            </div>
           </div>
 
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-            Upload Any Payslip PDF • <span className="bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">Track & Customize All Fields</span>
-          </h1>
+          {/* Upload Dropzone Box */}
+          <div className="bg-white p-8 sm:p-14 rounded-3xl border-2 border-dashed border-slate-300 hover:border-indigo-500 transition-all text-center space-y-6 shadow-xs">
+            <div className="w-18 h-18 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center mx-auto shadow-lg shadow-indigo-100">
+              <FileUp className="w-9 h-9" />
+            </div>
 
-          <p className="text-xs sm:text-sm text-slate-600 leading-relaxed font-medium">
-            Upload your existing PDF payslip to automatically track company details, employee info, earnings, deductions, and tax withholdings. Edit any field, change design templates, colors, fonts, and re-export a 300 DPI high-definition PDF instantly.
-          </p>
-        </div>
-      </div>
+            <div className="space-y-2 max-w-md mx-auto">
+              <h3 className="text-xl font-extrabold text-slate-900">Upload PDF to Edit</h3>
+              <p className="text-xs sm:text-sm text-slate-500">
+                Drag & drop your PDF file here, or click below. Supports Portrait, Landscape, Letter, A4, and Presentation slides.
+              </p>
+            </div>
 
-      {/* Upload Dropzone Section */}
-      {!extractedData ? (
-        <div className="bg-white p-8 sm:p-12 rounded-3xl border-2 border-dashed border-slate-300 hover:border-indigo-500 transition-all text-center space-y-5 shadow-xs">
-          
-          <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center mx-auto shadow-md shadow-indigo-100">
-            <FileUp className="w-8 h-8" />
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <label className="px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-indigo-600/20 transition-all cursor-pointer flex items-center gap-2 active:scale-95">
+                <FileUp className="w-4 h-4" />
+                <span>{isProcessing ? 'Parsing Document...' : 'Browse & Upload PDF'}</span>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf"
+                  onChange={handleFileUpload}
+                  disabled={isProcessing}
+                  className="hidden"
+                />
+              </label>
+
+              <button
+                onClick={handleLoadSamplePdf}
+                disabled={isProcessing}
+                className="px-5 py-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm transition-all flex items-center gap-2 border border-slate-200"
+              >
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                <span>Try Sample Corporate Payslip PDF</span>
+              </button>
+            </div>
+
+            {/* Feature Grid Badges */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl mx-auto pt-6 text-left">
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                  <Edit3 className="w-3.5 h-3.5 text-indigo-600" /> Click-to-Edit Text
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">Click any text on the original PDF to replace or update it inline.</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                  <Square className="w-3.5 h-3.5 text-emerald-600" /> Whiteout & Redaction
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">Seamlessly mask and erase unwanted logos, amounts, or text blocks.</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                  <Stamp className="w-3.5 h-3.5 text-violet-600" /> Stamps & Signatures
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">Add official 'PAID' badges or draw signatures with your mouse.</div>
+              </div>
+            </div>
           </div>
-
-          <div className="space-y-1.5 max-w-md mx-auto">
-            <h3 className="text-lg font-extrabold text-slate-900">Upload PDF Payslip</h3>
-            <p className="text-xs text-slate-500">
-              Drag & drop your PDF file here, or click to browse. We will automatically parse and track all editable fields.
-            </p>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-            <label className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-md shadow-indigo-600/20 transition-all cursor-pointer flex items-center gap-2 active:scale-95">
-              <FileUp className="w-4 h-4" />
-              <span>{isProcessing ? 'Parsing PDF Fields...' : 'Browse & Upload PDF'}</span>
-              <input type="file" accept=".pdf" onChange={handleFileUpload} disabled={isProcessing} className="hidden" />
-            </label>
-
-            <button
-              onClick={handleLoadSamplePdfData}
-              disabled={isProcessing}
-              className="px-5 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all flex items-center gap-2 border border-slate-200"
-            >
-              <Sparkles className="w-4 h-4 text-indigo-600" />
-              <span>Try Sample Corporate PDF</span>
-            </button>
-          </div>
-
-          <div className="pt-4 text-[11px] text-slate-400 flex items-center justify-center gap-4">
-            <span>🔒 100% In-Browser Privacy</span>
-            <span>⚡ Zero Server Retention</span>
-            <span>📄 Full PDF Customization</span>
-          </div>
-
         </div>
       ) : (
         
-        /* Interactive Smart Extracted Fields Inspector & Live Studio Editor */
-        <div className="space-y-6">
+        /* Interactive PDF Document Editor Studio */
+        <div className="space-y-4">
           
-          {/* Status Bar */}
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+          {/* Top Main Toolbar */}
+          <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/90 shadow-xs flex flex-wrap items-center justify-between gap-3">
+            
+            {/* File & Page Indicator */}
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold border border-emerald-200">
-                <CheckCircle2 className="w-5 h-5" />
+              <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold border border-indigo-100">
+                <FileText className="w-5 h-5" />
               </div>
               <div>
-                <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                  <span>Tracked & Extracted PDF Fields:</span>
-                  <span className="font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded text-[11px]">{importedFileName}</span>
+                <div className="text-xs font-extrabold text-slate-900 flex items-center gap-2 max-w-[200px] sm:max-w-xs truncate">
+                  <span className="truncate">{fileName || 'Uploaded PDF'}</span>
                 </div>
-                <div className="text-[11px] text-slate-500">100% Editable • Live PDF Preview Engine Active</div>
+                <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1.5">
+                  <span>{numPages} {numPages === 1 ? 'Page' : 'Pages'}</span>
+                  {currentPageData && (
+                    <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[10px] font-mono">
+                      {currentPageData.isLandscape ? 'Landscape' : 'Portrait'} ({Math.round(currentPageData.width)}×{Math.round(currentPageData.height)} pt)
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            {/* Mode Switcher Tools */}
+            <div className="flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200 text-xs font-bold">
               <button
-                onClick={() => setExtractedData(null)}
+                onClick={() => setActiveTool('select')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  activeTool === 'select'
+                    ? 'bg-white text-indigo-600 shadow-xs font-extrabold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Select and Move Elements"
+              >
+                <Move className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Select</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTool('edit_text')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  activeTool === 'edit_text'
+                    ? 'bg-indigo-600 text-white shadow-xs font-extrabold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Click any text in the PDF to edit it"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Edit Text</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTool('add_text')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  activeTool === 'add_text'
+                    ? 'bg-white text-indigo-600 shadow-xs font-extrabold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Click anywhere on PDF to add new text"
+              >
+                <Type className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Add Text</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTool('whiteout')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  activeTool === 'whiteout'
+                    ? 'bg-white text-indigo-600 shadow-xs font-extrabold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Click to place a whiteout mask"
+              >
+                <Square className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Whiteout</span>
+              </button>
+
+              <button
+                onClick={() => setSidebarTab('stamps')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all"
+                title="Stamps and Signature"
+              >
+                <Stamp className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Stamps</span>
+              </button>
+            </div>
+
+            {/* Actions: Undo/Redo, Zoom, Change PDF, Export */}
+            <div className="flex items-center gap-2">
+              <div className="hidden sm:flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button
+                  onClick={handleUndo}
+                  disabled={historyIndex <= 0}
+                  className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900 disabled:opacity-40 disabled:hover:text-slate-600"
+                  title="Undo (Ctrl+Z)"
+                >
+                  <Undo2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={handleRedo}
+                  disabled={historyIndex >= history.length - 1}
+                  className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900 disabled:opacity-40 disabled:hover:text-slate-600"
+                  title="Redo (Ctrl+Y)"
+                >
+                  <Redo2 className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Zoom Controls */}
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+                <button
+                  onClick={() => setZoomScale(prev => Math.max(0.4, Number((prev - 0.15).toFixed(2))))}
+                  className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900"
+                  title="Zoom Out"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setZoomScale(1.0)}
+                  className="font-mono font-bold text-[11px] px-1 text-slate-700 min-w-[40px] text-center hover:bg-white rounded"
+                  title="Reset Zoom to 100%"
+                >
+                  {Math.round(zoomScale * 100)}%
+                </button>
+                <button
+                  onClick={() => setZoomScale(prev => Math.min(2.0, Number((prev + 0.15).toFixed(2))))}
+                  className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900"
+                  title="Zoom In"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <button
+                onClick={() => {
+                  setPdfDoc(null);
+                  setPdfBuffer(null);
+                }}
                 className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all border border-slate-200"
               >
-                Upload Different PDF
+                Change PDF
               </button>
 
               <button
-                onClick={handleExportEditedPdf}
+                onClick={handleExportPdf}
                 disabled={isExporting}
-                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-md transition-all flex items-center gap-1.5 active:scale-95"
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-md shadow-indigo-600/20 transition-all flex items-center gap-1.5 active:scale-95"
               >
                 <Download className="w-4 h-4" />
-                <span>{isExporting ? 'Exporting PDF...' : 'Download Modified PDF'}</span>
+                <span>{isExporting ? 'Exporting...' : 'Download PDF'}</span>
               </button>
             </div>
+
           </div>
 
-          {/* Main 2-Column Inspector Workspace */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            
-            {/* Left Column: Smart Editable Fields Tracker */}
-            <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-6 max-h-[85vh] overflow-y-auto custom-scrollbar">
-              
-              {/* Section 1: Company Details */}
-              <div className="space-y-3">
-                <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1.5">
-                  <Building2 className="w-4 h-4" />
-                  <span>1. Company Info & Logo</span>
-                </h3>
+          {/* Contextual Properties Bar (Visible when an element is selected) */}
+          {selectedElement && (
+            <div className="bg-indigo-50/90 p-2.5 sm:p-3 rounded-2xl border border-indigo-200 flex flex-wrap items-center justify-between gap-3 text-xs animate-fade-in shadow-xs">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="font-bold text-indigo-900 flex items-center gap-1.5">
+                  <Sliders className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Edit {selectedElement.type.toUpperCase()}:</span>
+                </span>
 
-                <div className="space-y-2 text-xs">
-                  <div>
-                    <label className="font-semibold text-slate-700">Company Name</label>
-                    <input
-                      type="text"
-                      value={extractedData.company.name}
-                      onChange={(e) => setExtractedData({
-                        ...extractedData,
-                        company: { ...extractedData.company, name: e.target.value }
-                      })}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 font-bold text-slate-900 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="font-semibold text-slate-700">Registration ID</label>
-                      <input
-                        type="text"
-                        value={extractedData.company.registrationNumber}
-                        onChange={(e) => setExtractedData({
-                          ...extractedData,
-                          company: { ...extractedData.company, registrationNumber: e.target.value }
-                        })}
-                        className="w-full p-2 rounded-xl border border-slate-300 mt-1 font-mono text-[11px]"
+                {selectedElement.type === 'text' && (
+                  <>
+                    {/* Font Family */}
+                    <div className="w-32">
+                      <CustomSelect
+                        options={['Inter', 'Arial', 'Helvetica', 'Times New Roman', 'Courier Prime', 'Roboto', 'Outfit', 'Montserrat']}
+                        value={selectedElement.fontFamily || 'Inter'}
+                        onChange={(f) => updateSelectedElement({ fontFamily: f })}
                       />
                     </div>
-                    <div>
-                      <label className="font-semibold text-slate-700">Tax / VAT ID</label>
-                      <input
-                        type="text"
-                        value={extractedData.company.taxPanVatNumber}
-                        onChange={(e) => setExtractedData({
-                          ...extractedData,
-                          company: { ...extractedData.company, taxPanVatNumber: e.target.value }
-                        })}
-                        className="w-full p-2 rounded-xl border border-slate-300 mt-1 font-mono text-[11px]"
-                      />
+
+                    {/* Font Size */}
+                    <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-300">
+                      <button
+                        onClick={() => updateSelectedElement({ fontSize: Math.max(8, (selectedElement.fontSize || 14) - 1) })}
+                        className="px-2 py-0.5 font-bold hover:bg-slate-100 rounded"
+                      >
+                        -
+                      </button>
+                      <span className="font-mono font-bold px-1 text-[11px]">{selectedElement.fontSize || 14}pt</span>
+                      <button
+                        onClick={() => updateSelectedElement({ fontSize: Math.min(60, (selectedElement.fontSize || 14) + 1) })}
+                        className="px-2 py-0.5 font-bold hover:bg-slate-100 rounded"
+                      >
+                        +
+                      </button>
                     </div>
-                  </div>
-                </div>
-              </div>
 
-              {/* Section 2: Employee Details */}
-              <div className="space-y-3 pt-3 border-t border-slate-100">
-                <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1.5">
-                  <User className="w-4 h-4" />
-                  <span>2. Employee Details</span>
-                </h3>
-
-                <div className="space-y-2 text-xs">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="font-semibold text-slate-700">Employee Name</label>
-                      <input
-                        type="text"
-                        value={extractedData.employee.fullName}
-                        onChange={(e) => setExtractedData({
-                          ...extractedData,
-                          employee: { ...extractedData.employee, fullName: e.target.value }
-                        })}
-                        className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 font-bold text-slate-900"
-                      />
+                    {/* Text Styling Toggles */}
+                    <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-300">
+                      <button
+                        onClick={() => updateSelectedElement({ bold: !selectedElement.bold })}
+                        className={`p-1.5 rounded ${selectedElement.bold ? 'bg-indigo-100 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'}`}
+                        title="Bold"
+                      >
+                        <Bold className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => updateSelectedElement({ italic: !selectedElement.italic })}
+                        className={`p-1.5 rounded ${selectedElement.italic ? 'bg-indigo-100 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'}`}
+                        title="Italic"
+                      >
+                        <Italic className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-                    <div>
-                      <label className="font-semibold text-slate-700">Employee ID</label>
+
+                    {/* Color Picker */}
+                    <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-xl border border-slate-300">
                       <input
-                        type="text"
-                        value={extractedData.employee.id}
-                        onChange={(e) => setExtractedData({
-                          ...extractedData,
-                          employee: { ...extractedData.employee, id: e.target.value }
-                        })}
-                        className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 font-mono font-bold text-indigo-600"
+                        type="color"
+                        value={selectedElement.color || '#0f172a'}
+                        onChange={(e) => updateSelectedElement({ color: e.target.value })}
+                        className="w-5 h-5 rounded cursor-pointer border-0 p-0"
                       />
+                      <span className="font-mono text-[10px] text-slate-600">{selectedElement.color || '#0f172a'}</span>
                     </div>
-                  </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="font-semibold text-slate-700">Designation</label>
-                      <input
-                        type="text"
-                        value={extractedData.employee.designation}
-                        onChange={(e) => setExtractedData({
-                          ...extractedData,
-                          employee: { ...extractedData.employee, designation: e.target.value }
-                        })}
-                        className="w-full p-2 rounded-xl border border-slate-300 mt-1"
-                      />
-                    </div>
-                    <div>
-                      <label className="font-semibold text-slate-700">Department</label>
-                      <input
-                        type="text"
-                        value={extractedData.employee.department}
-                        onChange={(e) => setExtractedData({
-                          ...extractedData,
-                          employee: { ...extractedData.employee, department: e.target.value }
-                        })}
-                        className="w-full p-2 rounded-xl border border-slate-300 mt-1"
-                      />
-                    </div>
-                  </div>
+                    {/* Mask Original Background Toggle */}
+                    <button
+                      onClick={() => updateSelectedElement({ hasWhiteoutBg: !selectedElement.hasWhiteoutBg })}
+                      className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border font-bold text-[11px] transition-all ${
+                        selectedElement.hasWhiteoutBg
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white text-slate-700 border-slate-300'
+                      }`}
+                      title="Covers original PDF text behind this block"
+                    >
+                      <Square className="w-3 h-3" />
+                      <span>Whiteout Mask</span>
+                    </button>
+                  </>
+                )}
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="font-semibold text-slate-700">Bank Name</label>
-                      <input
-                        type="text"
-                        value={extractedData.employee.bankName}
-                        onChange={(e) => setExtractedData({
-                          ...extractedData,
-                          employee: { ...extractedData.employee, bankName: e.target.value }
-                        })}
-                        className="w-full p-2 rounded-xl border border-slate-300 mt-1"
-                      />
-                    </div>
-                    <div>
-                      <label className="font-semibold text-slate-700">Account Number</label>
-                      <input
-                        type="text"
-                        value={extractedData.employee.bankAccountNumber}
-                        onChange={(e) => setExtractedData({
-                          ...extractedData,
-                          employee: { ...extractedData.employee, bankAccountNumber: e.target.value }
-                        })}
-                        className="w-full p-2 rounded-xl border border-slate-300 mt-1 font-mono"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 3: Earnings & Deductions */}
-              <div className="space-y-3 pt-3 border-t border-slate-100">
-                <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1.5">
-                  <DollarSign className="w-4 h-4" />
-                  <span>3. Earnings & Deductions</span>
-                </h3>
-
-                <div className="space-y-2 text-xs">
-                  <div>
-                    <label className="font-semibold text-slate-700">Basic Salary ($)</label>
-                    <input
-                      type="number"
-                      value={extractedData.employee.basicSalary}
-                      onChange={(e) => setExtractedData({
-                        ...extractedData,
-                        employee: { ...extractedData.employee, basicSalary: parseFloat(e.target.value) || 0 }
-                      })}
-                      className="w-full p-2.5 rounded-xl border border-slate-300 mt-1 font-mono text-base font-extrabold text-slate-900"
-                    />
-                  </div>
-
-                  {extractedData.earnings.map((e, idx) => (
-                    <div key={e.id} className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={e.name}
-                        onChange={(ev) => {
-                          const updated = [...extractedData.earnings];
-                          updated[idx].name = ev.target.value;
-                          setExtractedData({ ...extractedData, earnings: updated });
-                        }}
-                        className="flex-1 p-2 rounded-xl border border-slate-300 text-xs"
-                      />
-                      <input
-                        type="number"
-                        value={e.amount}
-                        onChange={(ev) => {
-                          const updated = [...extractedData.earnings];
-                          updated[idx].amount = parseFloat(ev.target.value) || 0;
-                          setExtractedData({ ...extractedData, earnings: updated });
-                        }}
-                        className="w-24 p-2 rounded-xl border border-slate-300 font-mono text-xs"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Section 4: Design Customization */}
-              <div className="space-y-3 pt-3 border-t border-slate-100 text-xs">
-                <h3 className="font-bold text-indigo-600 uppercase tracking-wider text-xs flex items-center gap-1.5">
-                  <Sliders className="w-4 h-4" />
-                  <span>4. Customize Theme & Font</span>
-                </h3>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="font-semibold text-slate-700">Accent Color</label>
+                {selectedElement.type === 'whiteout' && (
+                  <div className="flex items-center gap-2 bg-white px-2 py-1 rounded-xl border border-slate-300">
+                    <span className="font-semibold text-slate-700">Mask Color:</span>
                     <input
                       type="color"
-                      value={accentColor}
-                      onChange={(e) => setAccentColor(e.target.value)}
-                      className="w-full h-9 rounded-xl border border-slate-300 cursor-pointer mt-1"
+                      value={selectedElement.fillColor || '#ffffff'}
+                      onChange={(e) => updateSelectedElement({ fillColor: e.target.value })}
+                      className="w-5 h-5 rounded cursor-pointer border-0 p-0"
                     />
                   </div>
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Font Family</label>
-                    <CustomSelect
-                      options={['Inter', 'Outfit', 'Roboto', 'Montserrat', 'Poppins', 'Courier Prime']}
-                      value={fontFamily}
-                      onChange={(f) => setFontFamily(f as any)}
-                    />
-                  </div>
-                </div>
+                )}
               </div>
 
-            </div>
-
-            {/* Right Column: Live Customized PDF Preview Canvas */}
-            <div className="lg:col-span-7 bg-slate-200/80 p-4 sm:p-8 rounded-2xl border border-slate-300/80 flex flex-col items-center justify-start overflow-auto custom-scrollbar">
-              
-              <div
-                ref={previewRef}
-                className="bg-white text-slate-900 p-8 sm:p-12 shadow-2xl shadow-slate-900/10 w-[210mm] min-h-[297mm] rounded-sm transition-all"
-                style={{ fontFamily: fontFamily === 'Courier Prime' ? 'monospace' : fontFamily }}
+              {/* Delete Button */}
+              <button
+                onClick={() => handleDeleteElement(selectedElement.id)}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 font-bold border border-rose-200 transition-all"
               >
-                {/* Header */}
-                <div className="flex items-start justify-between border-b-2 pb-5 mb-5" style={{ borderColor: accentColor }}>
-                  <div className="space-y-1">
-                    {extractedData.company.logoUrl ? (
-                      <img src={extractedData.company.logoUrl} alt="Logo" className="h-10 max-w-[160px] object-contain mb-1" />
-                    ) : (
-                      <div className="w-10 h-10 rounded-lg text-white font-bold flex items-center justify-center text-lg mb-1" style={{ backgroundColor: accentColor }}>
-                        {extractedData.company.name.charAt(0)}
-                      </div>
-                    )}
-                    <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">{extractedData.company.name}</h1>
-                    <p className="text-[11px] text-slate-500">{extractedData.company.address}, {extractedData.company.city}</p>
-                    <p className="text-[10px] text-slate-400 font-mono">Reg: {extractedData.company.registrationNumber} • Tax: {extractedData.company.taxPanVatNumber}</p>
-                  </div>
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete</span>
+              </button>
+            </div>
+          )}
 
-                  <div className="text-right space-y-1">
-                    <span className="inline-block px-3 py-1 rounded text-xs font-bold uppercase tracking-wider border" style={{ backgroundColor: `${accentColor}15`, color: accentColor, borderColor: `${accentColor}40` }}>
-                      CUSTOM PAYSLIP
-                    </span>
-                    <div className="text-base font-extrabold font-mono text-slate-900 mt-2">PS-2026-IMPORTED</div>
-                    <div className="text-[11px] font-semibold text-slate-600">{extractedData.salaryMonth} {extractedData.salaryYear}</div>
-                  </div>
-                </div>
+          {/* Main 2-Column PDF Workbench */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            {/* Left Column: Smart Inspector & Tools Sidebar */}
+            <div className="lg:col-span-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs space-y-5 max-h-[82vh] overflow-y-auto custom-scrollbar">
+              
+              {/* Sidebar Tabs */}
+              <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+                <button
+                  onClick={() => setSidebarTab('smart_replace')}
+                  className={`flex-1 py-1.5 px-2 rounded-lg text-center transition-all ${
+                    sidebarTab === 'smart_replace'
+                      ? 'bg-white text-indigo-600 shadow-xs font-extrabold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Quick Replace
+                </button>
+                <button
+                  onClick={() => setSidebarTab('layers')}
+                  className={`flex-1 py-1.5 px-2 rounded-lg text-center transition-all ${
+                    sidebarTab === 'layers'
+                      ? 'bg-white text-indigo-600 shadow-xs font-extrabold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Layers ({currentElements.length})
+                </button>
+                <button
+                  onClick={() => setSidebarTab('stamps')}
+                  className={`flex-1 py-1.5 px-2 rounded-lg text-center transition-all ${
+                    sidebarTab === 'stamps'
+                      ? 'bg-white text-indigo-600 shadow-xs font-extrabold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Stamps & Sign
+                </button>
+              </div>
 
-                {/* Employee Info */}
-                <div className="grid grid-cols-2 gap-6 p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs mb-5">
+              {/* Tab 1: Smart Replace (Auto-detected text in uploaded PDF) */}
+              {sidebarTab === 'smart_replace' && (
+                <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <div className="flex justify-between"><span className="text-slate-500 font-semibold">Employee Name:</span> <strong className="text-slate-900">{extractedData.employee.fullName}</strong></div>
-                    <div className="flex justify-between"><span className="text-slate-500 font-semibold">Employee ID:</span> <span className="font-mono font-bold">{extractedData.employee.id}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-500 font-semibold">Designation:</span> <span>{extractedData.employee.designation}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-500 font-semibold">Department:</span> <span>{extractedData.employee.department}</span></div>
+                    <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Auto-Detected Fields (Page {currentPage})</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Search or click any field from the uploaded PDF to update its text and mask the original.
+                    </p>
                   </div>
 
-                  <div className="space-y-1.5 border-l border-slate-200 pl-6">
-                    <div className="flex justify-between"><span className="text-slate-500 font-semibold">Bank Name:</span> <span>{extractedData.employee.bankName}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-500 font-semibold">Account Number:</span> <span className="font-mono">{extractedData.employee.bankAccountNumber}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-500 font-semibold">Tax / PAN ID:</span> <span className="font-mono">{extractedData.employee.taxPanNumber}</span></div>
+                  {/* Search and Category Filters */}
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                      <input
+                        type="text"
+                        placeholder="Search detected text in PDF..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap gap-1 text-[10px] font-bold">
+                      {(['all', 'amount', 'date', 'id', 'name'] as const).map((cat) => (
+                        <button
+                          key={cat}
+                          onClick={() => setFilterCategory(cat)}
+                          className={`px-2.5 py-1 rounded-lg capitalize transition-all flex items-center gap-1 ${
+                            filterCategory === cat
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          <span>{cat === 'all' ? 'All Items' : (cat === 'id' ? 'IDs & Codes' : (cat === 'amount' ? 'Amounts ($)' : cat))}</span>
+                          <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${
+                            filterCategory === cat ? 'bg-indigo-700 text-white' : 'bg-slate-200 text-slate-700'
+                          }`}>
+                            {categoryCounts[cat]}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Detected Items List */}
+                  <div className="space-y-2 max-h-[50vh] overflow-y-auto custom-scrollbar pr-1">
+                    {currentPageTextItems.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-slate-400 border border-dashed rounded-xl">
+                        No matching text items found on this page.
+                      </div>
+                    ) : (
+                      currentPageTextItems.map((item) => {
+                        const matchingOverlay = currentElements.find(el => el.originalTextId === item.id);
+                        return (
+                          <div
+                            key={item.id}
+                            onMouseEnter={() => setHoveredTextItem(item)}
+                            onMouseLeave={() => setHoveredTextItem(null)}
+                            className={`p-2.5 rounded-xl border transition-all text-xs space-y-1.5 ${
+                              matchingOverlay
+                                ? 'bg-indigo-50/70 border-indigo-200'
+                                : 'bg-slate-50 hover:bg-white border-slate-200 hover:border-indigo-300'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className={`px-1.5 py-0.5 rounded font-bold uppercase ${
+                                item.category === 'amount' ? 'bg-emerald-100 text-emerald-800' :
+                                item.category === 'date' ? 'bg-amber-100 text-amber-800' :
+                                item.category === 'id' ? 'bg-purple-100 text-purple-800' :
+                                'bg-slate-200 text-slate-700'
+                              }`}>
+                                {item.category}
+                              </span>
+                              <span className="text-slate-400 font-mono">
+                                pos: {Math.round(item.x)}%, {Math.round(item.y)}%
+                              </span>
+                            </div>
+
+                            <div className="font-semibold text-slate-900 line-clamp-1 font-mono text-[11px]">
+                              {item.str}
+                            </div>
+
+                            {matchingOverlay ? (
+                              <div className="space-y-1 pt-1 border-t border-indigo-100">
+                                <label className="text-[10px] text-indigo-700 font-bold">Replacement Text:</label>
+                                <input
+                                  type="text"
+                                  value={matchingOverlay.text || ''}
+                                  onChange={(e) => {
+                                    updateElementsByPage(prev => {
+                                      const pageEls = prev[currentPage] || [];
+                                      const updated = pageEls.map(el => el.id === matchingOverlay.id ? { ...el, text: e.target.value } : el);
+                                      return { ...prev, [currentPage]: updated };
+                                    });
+                                  }}
+                                  className="w-full p-1.5 text-xs rounded-lg border border-indigo-300 bg-white font-bold text-slate-900 focus:outline-none"
+                                />
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => handleEditDetectedText(item)}
+                                className="w-full py-1 rounded-lg bg-white hover:bg-indigo-600 hover:text-white text-indigo-600 font-bold text-[11px] border border-slate-200 hover:border-indigo-600 transition-all flex items-center justify-center gap-1"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                                <span>Edit This Text</span>
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
+              )}
 
-                {/* Table */}
-                <div className="border border-slate-300 rounded-lg overflow-hidden text-xs mb-5">
-                  <div className="grid grid-cols-2 text-white font-bold py-2.5 px-4 text-[11px] uppercase tracking-wider" style={{ backgroundColor: accentColor }}>
-                    <span>Earnings</span>
-                    <span className="border-l border-white/20 pl-4">Deductions</span>
+              {/* Tab 2: Layers Manager */}
+              {sidebarTab === 'layers' && (
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Page Elements ({currentElements.length})</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Manage all overlays, text modifications, and whiteout boxes.
+                    </p>
                   </div>
 
-                  <div className="grid grid-cols-2 divide-x divide-slate-200">
-                    <div className="p-4 space-y-2">
-                      <div className="flex justify-between font-bold text-slate-900 border-b border-slate-100 pb-1">
-                        <span>Basic Salary</span>
-                        <span className="font-mono">{formatCurrency(extractedData.employee.basicSalary)}</span>
-                      </div>
-                      {extractedData.earnings.map((e) => (
-                        <div key={e.id} className="flex justify-between text-slate-700">
-                          <span>{e.name}</span>
-                          <span className="font-mono">{formatCurrency(e.amount)}</span>
+                  {currentElements.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-slate-400 border border-dashed rounded-xl">
+                      No edits or overlays placed on page {currentPage} yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-[55vh] overflow-y-auto custom-scrollbar">
+                      {currentElements.map((el, idx) => (
+                        <div
+                          key={el.id}
+                          onClick={() => setSelectedElementId(el.id)}
+                          className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 text-xs transition-all cursor-pointer ${
+                            selectedElementId === el.id
+                              ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-500/10'
+                              : 'bg-slate-50 hover:bg-white border-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            <span className="text-[10px] font-mono text-slate-400">#{idx + 1}</span>
+                            <span className="font-bold text-slate-800 capitalize truncate">
+                              {el.type === 'text' ? (el.text || 'Text Box') : el.type}
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteElement(el.id);
+                            }}
+                            className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       ))}
-                    </div>
-
-                    <div className="p-4 space-y-2">
-                      {extractedData.deductions.map((d) => (
-                        <div key={d.id} className="flex justify-between text-slate-700">
-                          <span>{d.name}</span>
-                          <span className="font-mono text-rose-600">-{formatCurrency(d.amount)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {calculated && (
-                    <div className="grid grid-cols-2 bg-slate-100 border-t border-slate-300 font-bold py-2.5 px-4">
-                      <div className="flex justify-between">
-                        <span>GROSS EARNINGS</span>
-                        <span className="font-mono text-emerald-700">{formatCurrency(calculated.grossSalary)}</span>
-                      </div>
-                      <div className="flex justify-between border-l border-slate-300 pl-4">
-                        <span>TOTAL DEDUCTIONS</span>
-                        <span className="font-mono text-rose-700">-{formatCurrency(calculated.totalDeductions)}</span>
-                      </div>
                     </div>
                   )}
                 </div>
+              )}
 
-                {/* Net Salary Callout */}
-                {calculated && (
-                  <div className="p-5 rounded-xl text-white flex items-center justify-between shadow-md mb-5" style={{ backgroundColor: accentColor }}>
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-200">NET SALARY PAYABLE</div>
-                      <div className="text-[11px] text-slate-300">Direct Bank Transfer ({extractedData.paymentDate})</div>
-                    </div>
-                    <div className="text-2xl font-extrabold font-mono text-white">
-                      {formatCurrency(calculated.netSalary)}
-                    </div>
+              {/* Tab 3: Stamps & Signatures */}
+              {sidebarTab === 'stamps' && (
+                <div className="space-y-4 text-xs">
+                  <div className="space-y-1">
+                    <h3 className="font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Stamp className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Official Stamps & Badges</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Click to place an official status stamp on the document.
+                    </p>
                   </div>
-                )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => handleAddPresetStamp('PAID', '#10b981')}
+                      className="p-2.5 rounded-xl border-2 border-emerald-500 bg-emerald-50 text-emerald-700 font-extrabold text-center hover:scale-105 transition-all shadow-xs"
+                    >
+                      PAID
+                    </button>
+                    <button
+                      onClick={() => handleAddPresetStamp('APPROVED', '#2563eb')}
+                      className="p-2.5 rounded-xl border-2 border-blue-500 bg-blue-50 text-blue-700 font-extrabold text-center hover:scale-105 transition-all shadow-xs"
+                    >
+                      APPROVED
+                    </button>
+                    <button
+                      onClick={() => handleAddPresetStamp('VERIFIED', '#7c3aed')}
+                      className="p-2.5 rounded-xl border-2 border-purple-500 bg-purple-50 text-purple-700 font-extrabold text-center hover:scale-105 transition-all shadow-xs"
+                    >
+                      VERIFIED
+                    </button>
+                    <button
+                      onClick={() => handleAddPresetStamp('CONFIDENTIAL', '#e11d48')}
+                      className="p-2.5 rounded-xl border-2 border-rose-500 bg-rose-50 text-rose-700 font-extrabold text-center hover:scale-105 transition-all shadow-xs"
+                    >
+                      CONFIDENTIAL
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 pt-3 border-t border-slate-100">
+                    <h4 className="font-bold text-slate-900">Custom Signature</h4>
+                    <button
+                      onClick={() => {
+                        setIsSignatureModalOpen(true);
+                        setTimeout(clearSignature, 50);
+                      }}
+                      className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 font-bold border border-slate-200 transition-all flex items-center justify-center gap-2"
+                    >
+                      <PenTool className="w-4 h-4 text-indigo-600" />
+                      <span>Draw Hand-Drawn Signature</span>
+                    </button>
+
+                    <label className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold border border-slate-200 transition-all flex items-center justify-center gap-2 cursor-pointer">
+                      <ImageIcon className="w-4 h-4 text-slate-600" />
+                      <span>Upload Logo / Stamp Image</span>
+                      <input
+                        ref={stampImageInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleStampImageUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Right Column: Interactive PDF Canvas Workbench */}
+            <div 
+              ref={workbenchRef}
+              className="lg:col-span-8 bg-slate-100/90 p-4 sm:p-8 rounded-2xl border border-slate-300/80 flex flex-col items-center justify-start overflow-auto custom-scrollbar min-h-[75vh]"
+            >
+              
+              {/* Pagination Bar */}
+              {numPages > 1 && (
+                <div className="bg-white px-4 py-2 rounded-xl shadow-md border border-slate-200 flex items-center gap-3 mb-4 text-xs font-bold z-10 sticky top-0">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage <= 1}
+                    className="p-1 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span>Page {currentPage} of {numPages}</span>
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(numPages, prev + 1))}
+                    disabled={currentPage >= numPages}
+                    className="p-1 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* PDF Document Container with EXACT Dynamic Aspect Ratio */}
+              <div
+                ref={containerRef}
+                onClick={handleCanvasClick}
+                className="relative bg-white shadow-2xl rounded-xs overflow-hidden select-none border border-slate-300 transition-all cursor-crosshair shrink-0"
+                style={{
+                  width: `${displayWidth}px`,
+                  height: `${displayHeight}px`,
+                  maxWidth: '100%',
+                }}
+              >
+                {/* 1. Underlying High-Res Rendered PDF Canvas */}
+                <canvas ref={canvasRef} className="block w-full h-full pointer-events-none" />
+
+                {/* 2. Detected PDF Text Hover Highlights (in Edit Text Mode) */}
+                {activeTool === 'edit_text' && (currentPageData?.textItems || []).map((item) => {
+                  const isHovered = hoveredTextItem?.id === item.id;
+                  const isExisting = currentElements.some(el => el.originalTextId === item.id);
+                  if (isExisting) return null;
+
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditDetectedText(item);
+                      }}
+                      onMouseEnter={() => setHoveredTextItem(item)}
+                      onMouseLeave={() => setHoveredTextItem(null)}
+                      className={`absolute border rounded-xs transition-all cursor-pointer ${
+                        isHovered
+                          ? 'bg-indigo-500/30 border-indigo-600 ring-2 ring-indigo-500/50 z-20'
+                          : 'border-indigo-400/40 hover:border-indigo-600 bg-indigo-50/15'
+                      }`}
+                      style={{
+                        left: `${item.x}%`,
+                        top: `${item.y}%`,
+                        width: `${item.width}%`,
+                        height: `${item.height}%`,
+                      }}
+                      title={`Click to edit "${item.str}"`}
+                    />
+                  );
+                })}
+
+                {/* 3. Interactive Placed Overlays (Modifications, Whiteouts, Replacement Text, Stamps) */}
+                {currentElements.map((el) => {
+                  const isSelected = selectedElementId === el.id;
+
+                  return (
+                    <div
+                      key={el.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedElementId(el.id);
+                        setActiveTool('select');
+                      }}
+                      className={`absolute group transition-shadow ${
+                        isSelected
+                          ? 'ring-2 ring-indigo-600 shadow-lg z-30 cursor-move'
+                          : 'hover:ring-1 hover:ring-indigo-400 z-10'
+                      }`}
+                      style={{
+                        left: `${el.x}%`,
+                        top: `${el.y}%`,
+                        width: `${el.width}%`,
+                        height: `${el.height}%`,
+                        backgroundColor: el.type === 'whiteout' ? (el.fillColor || '#ffffff') : (el.hasWhiteoutBg ? '#ffffff' : 'transparent'),
+                      }}
+                    >
+                      {/* Text Element Render */}
+                      {el.type === 'text' && (
+                        <div
+                          className="w-full h-full flex items-center px-1"
+                          style={{
+                            justifyContent: el.align === 'center' ? 'center' : (el.align === 'right' ? 'flex-end' : 'flex-start'),
+                          }}
+                        >
+                          <input
+                            type="text"
+                            value={el.text || ''}
+                            onChange={(e) => {
+                              const newText = e.target.value;
+                              updateElementsByPage(prev => {
+                                const pageEls = prev[currentPage] || [];
+                                const updated = pageEls.map(item => item.id === el.id ? { ...item, text: newText } : item);
+                                return { ...prev, [currentPage]: updated };
+                              });
+                            }}
+                            className="w-full h-full bg-transparent border-0 outline-none p-0"
+                            style={{
+                              fontSize: `${Math.max(8, ((el.fontSize || 14) * (displayWidth / (nativeWidth || 600))))}px`,
+                              fontFamily: el.fontFamily || 'Inter',
+                              color: el.color || '#0f172a',
+                              fontWeight: el.bold ? 'bold' : 'normal',
+                              fontStyle: el.italic ? 'italic' : 'normal',
+                              textAlign: el.align || 'left',
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Stamp Element Render */}
+                      {el.type === 'stamp' && (
+                        <div
+                          className="w-full h-full flex items-center justify-center border-2 font-extrabold uppercase select-none"
+                          style={{
+                            borderColor: el.stampColor || '#10b981',
+                            color: el.stampColor || '#10b981',
+                            fontSize: `${Math.max(10, 14 * (displayWidth / 650))}px`,
+                            opacity: el.opacity ?? 0.9,
+                          }}
+                        >
+                          {el.text}
+                        </div>
+                      )}
+
+                      {/* Image / Signature Element Render */}
+                      {el.type === 'image' && el.dataUrl && (
+                        <img
+                          src={el.dataUrl}
+                          alt="Stamp / Signature"
+                          className="w-full h-full object-contain pointer-events-none"
+                          style={{ opacity: el.opacity ?? 1 }}
+                        />
+                      )}
+
+                      {/* Move Drag Handle when Selected */}
+                      {isSelected && (
+                        <>
+                          <div
+                            onMouseDown={(e) => startDragElement(e, el)}
+                            className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-indigo-600 text-white rounded-md px-1.5 py-0.5 text-[9px] font-bold shadow-md cursor-grab active:cursor-grabbing flex items-center gap-1 z-40"
+                          >
+                            <Move className="w-2.5 h-2.5" />
+                            <span>Drag</span>
+                          </div>
+
+                          <div className="absolute -top-3.5 -right-3.5 flex items-center gap-1 z-40 bg-white rounded-full shadow-md border border-slate-200 p-0.5">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteElement(el.id);
+                              }}
+                              className="w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center text-[10px] hover:bg-rose-600 font-bold"
+                              title="Delete"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          {/* Bottom-Right Resize Handle */}
+                          <div
+                            onMouseDown={(e) => startResizeElement(e, el)}
+                            className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-600 rounded-full border-2 border-white shadow-md cursor-nwse-resize z-40"
+                            title="Resize"
+                          />
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
 
               </div>
 
@@ -737,6 +1575,70 @@ export const PdfImporter: React.FC<PdfImporterProps> = ({ onImportToStudio }) =>
 
           </div>
 
+        </div>
+      )}
+
+      {/* Hand-Drawn Signature Modal */}
+      {isSignatureModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-scale-up">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+                <PenTool className="w-4 h-4 text-indigo-600" />
+                <span>Draw Your Signature</span>
+              </h3>
+              <button
+                onClick={() => setIsSignatureModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              Sign below using your mouse or touch stylus. We will place it directly on the document.
+            </p>
+
+            <div className="border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 p-1 flex items-center justify-center">
+              <canvas
+                ref={signatureCanvasRef}
+                width={440}
+                height={160}
+                onMouseDown={startDrawing}
+                onMouseMove={draw}
+                onMouseUp={stopDrawing}
+                onMouseLeave={stopDrawing}
+                onTouchStart={startDrawing}
+                onTouchMove={draw}
+                onTouchEnd={stopDrawing}
+                className="bg-white rounded-lg cursor-crosshair touch-none w-full"
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <button
+                onClick={clearSignature}
+                className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
+              >
+                Clear
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsSignatureModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveSignature}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-md"
+                >
+                  Insert Signature
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

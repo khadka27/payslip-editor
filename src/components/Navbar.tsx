@@ -69,7 +69,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <FileUp className="w-3.5 h-3.5" />
-              <span>Import PDF</span>
+              <span>Edit PDF</span>
             </button>
 
             <button
